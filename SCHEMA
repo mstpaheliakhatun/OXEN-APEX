@@ -1,0 +1,2297 @@
+-- =============================================================================
+-- SUFIOUN DATABASE SYSTEM - MASTER SCRIPT
+-- Contains: 
+--   1. Dynamic Teardown (Drops existing objects)
+--   2. Schema Creation (Tables, Sequences, Triggers, Procedures)
+--   3. Test Data Insertion (10 rows per table)
+-- =============================================================================
+
+SET SERVEROUTPUT ON;
+SET DEFINE OFF;
+ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD';
+
+-- =============================================================================
+-- PART 1: DYNAMIC TEARDOWN SCRIPT
+-- =============================================================================
+DECLARE
+    CURSOR c_objects IS
+        SELECT object_name, object_type
+        FROM user_objects
+        WHERE object_name LIKE 'SUFIOUN_%'
+          AND object_type IN ('TABLE', 'VIEW', 'SEQUENCE', 'PROCEDURE', 'FUNCTION', 'TRIGGER', 'PACKAGE')
+        ORDER BY
+            CASE object_type
+                WHEN 'TRIGGER' THEN 1
+                WHEN 'PROCEDURE' THEN 2
+                WHEN 'FUNCTION' THEN 3
+                WHEN 'PACKAGE' THEN 4
+                WHEN 'VIEW' THEN 5
+                WHEN 'TABLE' THEN 6
+                WHEN 'SEQUENCE' THEN 7
+                ELSE 8
+            END;
+    v_sql VARCHAR2(500);
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Starting dynamic cleanup of SUFIOUN objects...');
+    DBMS_OUTPUT.PUT_LINE('------------------------------------------------');
+
+    FOR obj IN c_objects LOOP
+        BEGIN
+            IF obj.object_type = 'TABLE' THEN
+                v_sql := 'DROP TABLE ' || obj.object_name || ' CASCADE CONSTRAINTS';
+            ELSE
+                v_sql := 'DROP ' || obj.object_type || ' ' || obj.object_name;
+            END IF;
+
+            EXECUTE IMMEDIATE v_sql;
+            DBMS_OUTPUT.PUT_LINE('Successfully dropped ' || obj.object_type || ': ' || obj.object_name);
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Skipped ' || obj.object_type || ' ' || obj.object_name || ' - ' || SQLERRM);
+        END;
+    END LOOP;
+    
+    DBMS_OUTPUT.PUT_LINE('------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('Cleanup completed successfully! Starting schema creation...');
+END;
+/
+
+-- =============================================================================
+-- PART 2: DATABASE SETUP SCRIPT (DDL)
+-- =============================================================================
+
+--------------------------------------------------------------------------------
+-- 01. sufioun_COMPANY
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_company (
+    company_id          VARCHAR2(50) PRIMARY KEY,
+    company_name        VARCHAR2(200) NOT NULL UNIQUE,
+    company_proprietor  VARCHAR2(200),
+    phone_no            VARCHAR2(50) NOT NULL UNIQUE,
+    email               VARCHAR2(200) NOT NULL UNIQUE,
+    address             VARCHAR2(300),
+    website             VARCHAR2(200) UNIQUE,
+    contact_person      VARCHAR2(200),
+    cp_designation      VARCHAR2(200),
+    cp_phone_no         VARCHAR2(50),
+    tag_line            VARCHAR2(300),
+    mission_vision      VARCHAR2(1000),
+    status              NUMBER,
+    cre_by              VARCHAR2(100),
+    cre_dt              DATE,
+    upd_by              VARCHAR2(100),
+    upd_dt              DATE
+);
+
+CREATE SEQUENCE sufioun_company_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_company_bi
+BEFORE INSERT OR UPDATE ON sufioun_company FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.company_id IS NULL THEN
+        v_seq := sufioun_company_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.company_name),1,3));
+        :NEW.company_id := NVL(v_code, 'COM') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 02. sufioun_JOBS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_jobs (
+    job_id       VARCHAR2(50) PRIMARY KEY,
+    job_code     VARCHAR2(50),
+    job_title    VARCHAR2(150),
+    job_grade    VARCHAR2(1),
+    min_salary   NUMBER,
+    max_salary   NUMBER,
+    status       NUMBER,
+    cre_by       VARCHAR2(100),
+    cre_dt       DATE,
+    upd_by       VARCHAR2(100),
+    upd_dt       DATE,
+    CONSTRAINT sufioun_chk_job_grade CHECK (job_grade IN ('A','B','C') OR job_grade IS NULL)
+);
+
+CREATE SEQUENCE sufioun_jobs_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_jobs_bi
+BEFORE INSERT OR UPDATE ON sufioun_jobs FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.job_id IS NULL THEN
+        v_seq := sufioun_jobs_seq.NEXTVAL; 
+        IF :NEW.job_code IS NOT NULL THEN
+            v_code := UPPER(TRIM(:NEW.job_code));
+            :NEW.job_id := v_code || TO_CHAR(v_seq);
+        ELSE :NEW.job_id := TO_CHAR(v_seq); END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 03. sufioun_CUSTOMERS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_customers (
+    customer_id   VARCHAR2(50) PRIMARY KEY,
+    phone_no      VARCHAR2(50) UNIQUE, 
+    customer_name VARCHAR2(150) NOT NULL,
+    alt_phone_no  VARCHAR2(50),
+    email         VARCHAR2(150),
+    address       VARCHAR2(300),
+    city          VARCHAR2(100),
+    rewards       NUMBER DEFAULT 0,
+    remarks       VARCHAR2(1000),
+    status        NUMBER,
+    cre_by        VARCHAR2(100),
+    cre_dt        DATE,
+    upd_by        VARCHAR2(100),
+    upd_dt        DATE
+);
+
+CREATE SEQUENCE sufioun_customers_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_customers_bi
+BEFORE INSERT OR UPDATE ON sufioun_customers FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(10);
+BEGIN
+    IF INSERTING AND :NEW.customer_id IS NULL THEN
+        IF :NEW.phone_no IS NOT NULL THEN :NEW.customer_id := :NEW.phone_no;
+        ELSE
+            v_seq := sufioun_customers_seq.NEXTVAL;
+            v_code := UPPER(SUBSTR(TRIM(:NEW.customer_name),1,3));
+            :NEW.customer_id := v_code || TO_CHAR(v_seq);
+        END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 04. sufioun_PARTS_CATEGORY
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_parts_category (
+    parts_cat_id    VARCHAR2(50) PRIMARY KEY,
+    parts_cat_code  VARCHAR2(50),
+    parts_cat_name  VARCHAR2(150) ,
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE
+);
+
+CREATE SEQUENCE sufioun_parts_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_parts_cat_bi
+BEFORE INSERT OR UPDATE ON sufioun_parts_category FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.parts_cat_id IS NULL THEN
+        v_seq := sufioun_parts_cat_seq.NEXTVAL;
+        IF :NEW.parts_cat_code IS NOT NULL THEN
+            v_code := UPPER(TRIM(:NEW.parts_cat_code));
+            :NEW.parts_cat_id := v_code || TO_CHAR(v_seq);
+        ELSE :NEW.parts_cat_id := TO_CHAR(v_seq); END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 05. sufioun_PRODUCT_CATEGORIES
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_categories (
+    product_cat_id    VARCHAR2(50) PRIMARY KEY,
+    product_cat_name  VARCHAR2(150) ,
+    status            NUMBER,
+    cre_by            VARCHAR2(100),
+    cre_dt            DATE,
+    upd_by            VARCHAR2(100),
+    upd_dt            DATE
+);
+
+CREATE SEQUENCE sufioun_prod_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_cat_bi
+BEFORE INSERT OR UPDATE ON sufioun_product_categories FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.product_cat_id IS NULL THEN
+        v_seq := sufioun_prod_cat_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.product_cat_name),1,3));
+        :NEW.product_cat_id := NVL(v_code, 'CAT') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 06. sufioun_BRAND
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_brand (
+    brand_id      VARCHAR2(50) PRIMARY KEY,
+    brand_name    VARCHAR2(150),
+    model_name    VARCHAR2(150),
+    brand_size    VARCHAR2(30),
+    color         VARCHAR2(50),
+    status        NUMBER,
+    cre_by        VARCHAR2(100),
+    cre_dt        DATE,
+    upd_by        VARCHAR2(100),
+    upd_dt        DATE
+);
+
+CREATE SEQUENCE sufioun_brand_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_brand_bi
+BEFORE INSERT OR UPDATE ON sufioun_brand FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.brand_id IS NULL THEN
+        v_seq := sufioun_brand_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.brand_name),1,3));
+        :NEW.brand_id := NVL(v_code, 'BRD') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 07. sufioun_SUPPLIERS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_suppliers (
+    supplier_id    VARCHAR2(50) PRIMARY KEY,
+    supplier_name  VARCHAR2(150) NOT NULL,
+    phone_no       VARCHAR2(30),
+    email          VARCHAR2(150),
+    address        VARCHAR2(300),
+    contact_person VARCHAR2(100),
+    cp_designation VARCHAR2(100),
+    cp_phone_no    VARCHAR2(30),
+    cp_email       VARCHAR2(150),
+    purchase_total NUMBER DEFAULT 0,
+    pay_total      NUMBER DEFAULT 0,
+    due            NUMBER,
+    status         NUMBER,
+    cre_by         VARCHAR2(100),
+    cre_dt         DATE,
+    upd_by         VARCHAR2(100),
+    upd_dt         DATE
+);
+
+CREATE SEQUENCE sufioun_suppliers_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_suppliers_bi
+BEFORE INSERT OR UPDATE ON sufioun_suppliers FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.supplier_id IS NULL THEN
+        v_seq := sufioun_suppliers_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.supplier_name),1,3));
+        :NEW.supplier_id := NVL(v_code, 'SUP') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 08. sufioun_SERVICE_LIST
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_service_list (
+    servicelist_id VARCHAR2(50) PRIMARY KEY,
+    service_name   VARCHAR2(150) NOT NULL,
+    service_desc   VARCHAR2(1000),
+    service_cost   NUMBER DEFAULT 0,
+    status         NUMBER,
+    cre_by         VARCHAR2(100),
+    cre_dt         DATE,
+    upd_by         VARCHAR2(100),
+    upd_dt         DATE
+);
+
+CREATE SEQUENCE sufioun_service_list_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_service_list_bi
+BEFORE INSERT OR UPDATE ON sufioun_service_list FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.servicelist_id IS NULL THEN
+        v_seq := sufioun_service_list_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.service_name),1,3));
+        :NEW.servicelist_id := NVL(v_code, 'SRV') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 09. sufioun_EXPENSE_LIST
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_expense_list (
+    expense_type_id VARCHAR2(50) PRIMARY KEY,
+    expense_code    VARCHAR2(50),
+    type_name       VARCHAR2(200),
+    description     VARCHAR2(1000),
+    default_amount  NUMBER(15,2),
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE
+);
+
+CREATE SEQUENCE sufioun_exp_list_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_exp_list_bi
+BEFORE INSERT OR UPDATE ON sufioun_expense_list FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.expense_type_id IS NULL THEN
+        v_seq := sufioun_exp_list_seq.NEXTVAL; 
+        IF :NEW.expense_code IS NOT NULL THEN
+            v_code := UPPER(TRIM(:NEW.expense_code));
+            :NEW.expense_type_id := v_code || TO_CHAR(v_seq);
+        ELSE :NEW.expense_type_id := TO_CHAR(v_seq); END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 10. sufioun_SUB_CATEGORIES
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_sub_categories (
+    sub_cat_id       VARCHAR2(50) PRIMARY KEY,
+    sub_cat_name     VARCHAR2(150),
+    product_cat_id   VARCHAR2(50) REFERENCES sufioun_product_categories(product_cat_id),
+    status           NUMBER,
+    cre_by           VARCHAR2(100),
+    cre_dt           DATE,
+    upd_by           VARCHAR2(100),
+    upd_dt           DATE
+);
+
+CREATE SEQUENCE sufioun_sub_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sub_cat_bi
+BEFORE INSERT OR UPDATE ON sufioun_sub_categories FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.sub_cat_id IS NULL THEN
+        v_seq := sufioun_sub_cat_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.sub_cat_name),1,3));
+        :NEW.sub_cat_id := NVL(v_code, 'SUB') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 11. sufioun_PRODUCTS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_products (
+    product_id      VARCHAR2(50) PRIMARY KEY,
+    product_code    VARCHAR2(30),
+    product_name    VARCHAR2(150) NOT NULL,
+    supplier_id     VARCHAR2(50) REFERENCES sufioun_suppliers(supplier_id),
+    category_id     VARCHAR2(50) REFERENCES sufioun_product_categories(product_cat_id),
+    sub_cat_id      VARCHAR2(50) REFERENCES sufioun_sub_categories(sub_cat_id),
+    brand_id        VARCHAR2(50) REFERENCES sufioun_brand(brand_id),
+    uom             VARCHAR2(20),
+    mrp             NUMBER,
+    purchase_price  NUMBER,
+    warranty        NUMBER, 
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE
+);
+
+CREATE SEQUENCE sufioun_products_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_products_bi
+BEFORE INSERT OR UPDATE ON sufioun_products FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.product_id IS NULL THEN
+        v_seq := sufioun_products_seq.NEXTVAL;
+        IF :NEW.product_code IS NOT NULL THEN
+            :NEW.product_id := UPPER(TRIM(:NEW.product_code)) || TO_CHAR(v_seq);
+        ELSE :NEW.product_id := TO_CHAR(v_seq); END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 12. sufioun_PARTS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_parts (
+    parts_id       VARCHAR2(50) PRIMARY KEY,
+    parts_code     VARCHAR2(50),
+    parts_name     VARCHAR2(150),
+    purchase_price NUMBER,
+    mrp            NUMBER,
+    parts_cat_id   VARCHAR2(50) REFERENCES sufioun_parts_category(parts_cat_id),
+    status         NUMBER,
+    cre_by         VARCHAR2(100),
+    cre_dt         DATE,
+    upd_by         VARCHAR2(100),
+    upd_dt         DATE
+);
+
+CREATE SEQUENCE sufioun_parts_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_parts_bi
+BEFORE INSERT OR UPDATE ON sufioun_parts FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.parts_id IS NULL THEN
+        v_seq := sufioun_parts_seq.NEXTVAL;
+        IF :NEW.parts_code IS NOT NULL THEN
+            v_code := UPPER(TRIM(:NEW.parts_code));
+            :NEW.parts_id := v_code || TO_CHAR(v_seq);
+        ELSE :NEW.parts_id := TO_CHAR(v_seq); END IF;
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 13. sufioun_DEPARTMENTS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_departments (
+    department_id   VARCHAR2(50) PRIMARY KEY,
+    department_name VARCHAR2(100),
+    manager_id      VARCHAR2(50), 
+    company_id      VARCHAR2(50) NULL,
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE,
+    CONSTRAINT sufioun_fk_dept_company FOREIGN KEY (company_id) REFERENCES sufioun_company(company_id)
+);
+
+CREATE SEQUENCE sufioun_departments_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+--------------------------------------------------------------------------------
+-- 14. sufioun_EMPLOYEES
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_employees (
+    employee_id   VARCHAR2(50) PRIMARY KEY,
+    first_name    VARCHAR2(50),
+    last_name     VARCHAR2(50) NOT NULL,
+    email         VARCHAR2(150),
+    phone_no      VARCHAR2(30),
+    address       VARCHAR2(4000),
+    hire_date     DATE,
+    salary        NUMBER,
+    job_id        VARCHAR2(50) NULL,
+    manager_id    VARCHAR2(50), 
+    department_id VARCHAR2(50) NULL,
+    photo         BLOB,
+    status        NUMBER,
+    cre_by        VARCHAR2(100),
+    cre_dt        DATE,
+    upd_by        VARCHAR2(100),
+    upd_dt        DATE,
+    CONSTRAINT sufioun_fk_emp_job  FOREIGN KEY (job_id) REFERENCES sufioun_jobs(job_id),
+    CONSTRAINT sufioun_fk_emp_dept FOREIGN KEY (department_id) REFERENCES sufioun_departments(department_id)
+);
+
+CREATE SEQUENCE sufioun_employees_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+ALTER TABLE sufioun_employees ADD CONSTRAINT sufioun_fk_emp_mgr
+FOREIGN KEY (manager_id)
+REFERENCES sufioun_employees(employee_id)
+DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE sufioun_departments ADD CONSTRAINT sufioun_fk_dept_mgr 
+FOREIGN KEY (manager_id) 
+REFERENCES sufioun_employees(employee_id) 
+DEFERRABLE INITIALLY DEFERRED;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_departments_bi
+BEFORE INSERT OR UPDATE ON sufioun_departments FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.department_id IS NULL THEN
+        v_seq := sufioun_departments_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.department_name),1,3));
+        :NEW.department_id := NVL(v_code, 'DEP') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_employees_bi
+BEFORE INSERT OR UPDATE ON sufioun_employees FOR EACH ROW
+DECLARE v_seq NUMBER; v_code VARCHAR2(100);
+BEGIN
+    IF INSERTING AND :NEW.employee_id IS NULL THEN
+        v_seq := sufioun_employees_seq.NEXTVAL;
+        v_code := UPPER(SUBSTR(TRIM(:NEW.last_name),1,3));
+        :NEW.employee_id := NVL(v_code, 'EMP') || TO_CHAR(v_seq);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 15. sufioun_SALES_MASTER
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_sales_master (
+    invoice_id     VARCHAR2(50) PRIMARY KEY,
+    invoice_date   DATE DEFAULT SYSDATE,
+    discount       NUMBER DEFAULT 0,
+    vat            NUMBER DEFAULT 0,
+    adjust_ref     VARCHAR2(50),
+    total_amount   NUMBER(20,4) DEFAULT 0,
+    adjust_amount  NUMBER(20,4) DEFAULT 0,
+    grand_total    NUMBER(20,4) DEFAULT 0,
+    customer_id    VARCHAR2(50) NULL,
+    sales_by       VARCHAR2(50) NULL,
+    status         NUMBER,
+    cre_by         VARCHAR2(100),
+    cre_dt         DATE,
+    upd_by         VARCHAR2(100),
+    upd_dt         DATE,
+    CONSTRAINT sufioun_fk_sales_cust FOREIGN KEY (customer_id) REFERENCES sufioun_customers(customer_id),
+    CONSTRAINT sufioun_fk_sales_emp  FOREIGN KEY (sales_by) REFERENCES sufioun_employees(employee_id)
+);
+
+CREATE SEQUENCE sufioun_sales_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sales_master_bi
+BEFORE INSERT OR UPDATE ON sufioun_sales_master
+FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.invoice_id IS NULL THEN
+        :NEW.invoice_id := 'INV' || TO_CHAR(sufioun_sales_seq.NEXTVAL);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 16. sufioun_SALES_RETURN_MASTER
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_sales_return_master (
+    sales_return_id VARCHAR2(50) PRIMARY KEY,
+    invoice_id      VARCHAR2(50) NULL, 
+    customer_id     VARCHAR2(50) NULL,
+    return_date     DATE DEFAULT SYSDATE,
+    total_amount    NUMBER(20,4) DEFAULT 0,
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE,
+    CONSTRAINT sufioun_fk_srm_inv   FOREIGN KEY (invoice_id) REFERENCES sufioun_sales_master(invoice_id),
+    CONSTRAINT sufioun_fk_srm_cust  FOREIGN KEY (customer_id) REFERENCES sufioun_customers(customer_id)
+);
+
+CREATE SEQUENCE sufioun_sales_ret_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sales_ret_bi
+BEFORE INSERT OR UPDATE ON sufioun_sales_return_master FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.sales_return_id IS NULL THEN
+        :NEW.sales_return_id := 'SRT' || TO_CHAR(sufioun_sales_ret_seq.NEXTVAL);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+ALTER TABLE sufioun_sales_master ADD CONSTRAINT sufioun_fk_sales_adjust 
+FOREIGN KEY (adjust_ref) REFERENCES sufioun_sales_return_master(sales_return_id);
+
+--------------------------------------------------------------------------------
+-- 17. sufioun_SERVICE_MASTER
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_service_master (
+    service_id          VARCHAR2(50) PRIMARY KEY,
+    service_date        DATE DEFAULT SYSDATE,
+    customer_id         VARCHAR2(50) NULL,
+    invoice_id          VARCHAR2(50) NULL,
+    invoice_date        DATE, 
+    warranty_applicable CHAR(1),
+    service_by          VARCHAR2(50) NULL,
+    service_charge_total NUMBER DEFAULT 0,
+    total_price         NUMBER(20,4) DEFAULT 0,
+    vat                 NUMBER(20,4) DEFAULT 0,
+    grand_total         NUMBER(20,4) DEFAULT 0,
+    status              NUMBER,
+    cre_by              VARCHAR2(100),
+    cre_dt              DATE,
+    upd_by              VARCHAR2(100),
+    upd_dt              DATE,
+    CONSTRAINT sufioun_fk_sm_cust FOREIGN KEY (customer_id) REFERENCES sufioun_customers(customer_id),
+    CONSTRAINT sufioun_fk_sm_emp  FOREIGN KEY (service_by) REFERENCES sufioun_employees(employee_id),
+    CONSTRAINT sufioun_fk_sm_inv  FOREIGN KEY (invoice_id) REFERENCES sufioun_sales_master(invoice_id)
+);
+
+CREATE SEQUENCE sufioun_service_master_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+--------------------------------------------------------------------------------
+-- 18. sufioun_PRODUCT_ORDER_MASTER 
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_order_master (
+    order_id      VARCHAR2(50) PRIMARY KEY,
+    order_date    DATE DEFAULT SYSDATE,
+    supplier_id   VARCHAR2(50) NULL,
+    expected_delivery_date DATE,
+    order_by      VARCHAR2(50) NULL, 
+    total_amount  NUMBER(20,4) DEFAULT 0,
+    vat           NUMBER(20,4) DEFAULT 0,
+    grand_total   NUMBER(20,4) DEFAULT 0,
+    status        NUMBER,
+    cre_by        VARCHAR2(100),
+    cre_dt        DATE,
+    upd_by        VARCHAR2(100),
+    upd_dt        DATE,
+    CONSTRAINT sufioun_fk_pom_sup  FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
+    CONSTRAINT sufioun_fk_pom_emp  FOREIGN KEY (order_by) REFERENCES sufioun_employees(employee_id)
+);
+
+CREATE SEQUENCE sufioun_order_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_order_bi
+BEFORE INSERT OR UPDATE ON sufioun_product_order_master FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.order_id IS NULL THEN
+        :NEW.order_id := 'ORD' || TO_CHAR(sufioun_order_seq.NEXTVAL);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 19. sufioun_PRODUCT_RECEIVE_MASTER 
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_receive_master (
+    receive_id      VARCHAR2(50) PRIMARY KEY,
+    receive_date    DATE DEFAULT SYSDATE,
+    order_id        VARCHAR2(50) NULL,
+    sup_invoice_id  VARCHAR2(50) UNIQUE,
+    supplier_id     VARCHAR2(50) NULL, 
+    received_by     VARCHAR2(50) NULL, 
+    total_amount    NUMBER(20,4) DEFAULT 0,
+    vat             NUMBER(20,4) DEFAULT 0, 
+    grand_total     NUMBER(20,4) DEFAULT 0,   
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE,
+    CONSTRAINT sufioun_fk_pr_emp    FOREIGN KEY (received_by) REFERENCES sufioun_employees(employee_id),
+    CONSTRAINT sufioun_fk_pr_sup    FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
+    CONSTRAINT sufioun_fk_pr_order  FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id)
+);
+
+CREATE SEQUENCE sufioun_receive_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_recv_bi
+BEFORE INSERT OR UPDATE ON sufioun_product_receive_master FOR EACH ROW
+DECLARE
+    v_seq NUMBER;
+    v_latest_order VARCHAR2(50);
+BEGIN
+    IF INSERTING AND :NEW.receive_id IS NULL THEN
+        v_seq := sufioun_receive_seq.NEXTVAL;
+        :NEW.receive_id := 'RCV' || TO_CHAR(v_seq);
+        IF :NEW.sup_invoice_id IS NULL THEN
+            :NEW.sup_invoice_id := 'SINV' || TO_CHAR(v_seq);
+        END IF;
+    END IF;
+    
+    IF :NEW.order_id IS NULL AND :NEW.supplier_id IS NOT NULL THEN
+        BEGIN
+            SELECT order_id INTO v_latest_order
+            FROM (
+                SELECT order_id 
+                FROM sufioun_product_order_master
+                WHERE supplier_id = :NEW.supplier_id
+                ORDER BY order_date DESC, order_id DESC
+            )
+            WHERE ROWNUM = 1;
+            :NEW.order_id := v_latest_order;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN NULL;
+        END;
+    END IF;
+    
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 20. sufioun_PRODUCT_RETURN_MASTER 
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_return_master (
+    return_id       VARCHAR2(50) PRIMARY KEY,
+    supplier_id     VARCHAR2(50) NULL,
+    receive_id      VARCHAR2(50) NULL,
+    order_id        VARCHAR2(50) NULL,
+    return_date     DATE DEFAULT SYSDATE,
+    return_by       VARCHAR2(50) NULL, 
+    total_amount    NUMBER(20,4) DEFAULT 0,
+    adjusted_vat    NUMBER(20,4) DEFAULT 0, 
+    grand_total     NUMBER(20,4) DEFAULT 0,
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE,
+    CONSTRAINT sufioun_fk_pre_sup FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
+    CONSTRAINT sufioun_fk_pre_rcv FOREIGN KEY (receive_id) REFERENCES sufioun_product_receive_master(receive_id),
+    CONSTRAINT sufioun_fk_pre_order FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id),
+    CONSTRAINT sufioun_fk_pre_emp FOREIGN KEY (return_by) REFERENCES sufioun_employees(employee_id)
+);
+
+CREATE SEQUENCE sufioun_prod_ret_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_ret_bi
+BEFORE INSERT OR UPDATE ON sufioun_product_return_master FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.return_id IS NULL THEN
+        :NEW.return_id := 'PRT' || TO_CHAR(sufioun_prod_ret_seq.NEXTVAL);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 21. sufioun_DAMAGE
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_damage (
+    damage_id VARCHAR2(50) PRIMARY KEY,
+    damage_date DATE DEFAULT SYSDATE,
+    reference_no VARCHAR2(100),
+    total_loss NUMBER DEFAULT 0,
+    status NUMBER DEFAULT 1, 
+    approved_by VARCHAR2(100),
+    approval_date DATE,
+    cre_by VARCHAR2(100),
+    cre_dt DATE,
+    upd_by VARCHAR2(100),
+    upd_dt DATE, 
+    CONSTRAINT sufioun_fk_dmg_emp FOREIGN KEY (approved_by) REFERENCES sufioun_employees(employee_id)
+);
+
+CREATE SEQUENCE sufioun_damage_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_damage_bi
+BEFORE INSERT OR UPDATE ON sufioun_damage FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.damage_id IS NULL THEN
+        :NEW.damage_id := 'DMG' || TO_CHAR(sufioun_damage_seq.NEXTVAL);
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 22. sufioun_STOCK
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_stock (
+    stock_id        VARCHAR2(50) PRIMARY KEY,
+    product_id      VARCHAR2(50) NULL,
+    supplier_id     VARCHAR2(50) NULL,
+    product_cat_id  VARCHAR2(50) NULL,
+    sub_cat_id      VARCHAR2(50) NULL,
+    quantity        NUMBER DEFAULT 0,
+    last_update     TIMESTAMP DEFAULT SYSTIMESTAMP,
+    CONSTRAINT sufioun_fk_s_p       FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id),
+    CONSTRAINT sufioun_fk_s_sup     FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
+    CONSTRAINT sufioun_fk_prod_cat   FOREIGN KEY (product_cat_id) REFERENCES sufioun_product_categories(product_cat_id),
+    CONSTRAINT sufioun_chk_stock_qty CHECK (quantity >= 0),
+    CONSTRAINT sufioun_uk_stock_prod UNIQUE (product_id)
+);
+
+CREATE SEQUENCE sufioun_stock_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_stock_bi
+BEFORE INSERT OR UPDATE ON sufioun_stock FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.stock_id IS NULL THEN
+        :NEW.stock_id := 'STK' || TO_CHAR(sufioun_stock_seq.NEXTVAL);
+    END IF;
+    IF UPDATING THEN
+        :NEW.last_update := SYSTIMESTAMP;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 23. sufioun_SERVICE_DETAILS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_service_details (
+    service_det_id     VARCHAR2(50) PRIMARY KEY,
+    service_id         VARCHAR2(50) NULL,
+    product_id         VARCHAR2(50) NULL,
+    servicelist_id     VARCHAR2(50) NULL,
+    parts_id           VARCHAR2(50) NULL,
+    service_charge     NUMBER DEFAULT 0,
+    parts_price        NUMBER DEFAULT 0,
+    quantity           NUMBER DEFAULT 1, 
+    line_total         NUMBER DEFAULT 0,
+    description        VARCHAR2(1000), 
+    warranty_status    VARCHAR2(50),
+    CONSTRAINT sufioun_fk_sd_master FOREIGN KEY (service_id) REFERENCES sufioun_service_master(service_id),
+    CONSTRAINT sufioun_fk_sd_list   FOREIGN KEY (servicelist_id) REFERENCES sufioun_service_list(servicelist_id),
+    CONSTRAINT sufioun_fk_sd_parts  FOREIGN KEY (parts_id) REFERENCES sufioun_parts(parts_id),
+    CONSTRAINT sufioun_fk_sd_prod   FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_service_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_service_det_bi 
+BEFORE INSERT ON sufioun_service_details FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.service_det_id IS NULL THEN
+        :NEW.service_det_id := 'SDT' || TO_CHAR(sufioun_service_det_seq.NEXTVAL);  
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sd_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_service_details
+FOR EACH ROW
+DECLARE
+    v_service_id sufioun_service_details.service_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN
+        v_service_id := :NEW.service_id;
+    ELSE
+        v_service_id := :OLD.service_id;
+    END IF;
+    UPDATE sufioun_service_master
+    SET upd_by = USER,
+        upd_dt = SYSDATE
+    WHERE service_id = v_service_id;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 24. sufioun_SALES_DETAIL
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_sales_detail (
+    sales_det_id    VARCHAR2(50) PRIMARY KEY,
+    invoice_id      VARCHAR2(50) NULL,
+    product_id      VARCHAR2(50) NULL,
+    mrp             NUMBER,
+    purchase_price  NUMBER,
+    discount_amount NUMBER,
+    quantity        NUMBER,
+    description     VARCHAR2(1000), 
+    CONSTRAINT sufioun_fk_sdt_inv  FOREIGN KEY (invoice_id) REFERENCES sufioun_sales_master(invoice_id) ON DELETE CASCADE,
+    CONSTRAINT sufioun_fk_sdt_prod FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_sales_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sales_det_bi 
+BEFORE INSERT ON sufioun_sales_detail FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.sales_det_id IS NULL THEN
+        :NEW.sales_det_id := 'SLD' || TO_CHAR(sufioun_sales_det_seq.NEXTVAL); 
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sales_detail_sync
+FOR INSERT OR UPDATE OR DELETE ON sufioun_sales_detail
+COMPOUND TRIGGER
+  TYPE t_inv_list IS TABLE OF BOOLEAN INDEX BY sufioun_sales_detail.invoice_id%TYPE;
+  v_inv_ids t_inv_list;
+  v_idx sufioun_sales_detail.invoice_id%TYPE;
+  AFTER EACH ROW IS
+  BEGIN
+    IF INSERTING OR UPDATING THEN
+       v_inv_ids(:NEW.invoice_id) := TRUE;
+    ELSIF DELETING THEN
+       v_inv_ids(:OLD.invoice_id) := TRUE;
+    END IF;
+  END AFTER EACH ROW;
+  AFTER STATEMENT IS
+    v_total        NUMBER;
+    v_grand_total  NUMBER;
+    v_discount     NUMBER;
+    v_vat_pct      NUMBER;
+    v_adj_amount   NUMBER;
+  BEGIN
+    v_idx := v_inv_ids.FIRST;
+    WHILE v_idx IS NOT NULL LOOP
+      SELECT NVL(SUM(mrp * quantity), 0)
+      INTO v_total
+      FROM sufioun_sales_detail
+      WHERE invoice_id = v_idx;
+
+      SELECT NVL(discount, 0), NVL(vat, 0), NVL(adjust_amount, 0)
+      INTO v_discount, v_vat_pct, v_adj_amount
+      FROM sufioun_sales_master
+      WHERE invoice_id = v_idx;
+
+      v_grand_total := (v_total - v_discount - v_adj_amount) * (1 + v_vat_pct/100);
+
+      UPDATE sufioun_sales_master
+      SET total_amount = v_total,
+          grand_total  = ROUND(v_grand_total, 2),
+          upd_by       = USER,
+          upd_dt       = SYSDATE
+      WHERE invoice_id = v_idx;
+
+      v_idx := v_inv_ids.NEXT(v_idx);
+    END LOOP;
+  END AFTER STATEMENT;
+END sufioun_trg_sales_detail_sync;
+/
+
+--------------------------------------------------------------------------------
+-- 25. sufioun_SALES_RETURN_DETAILS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_sales_return_details (
+    sales_return_det_id VARCHAR2(50) PRIMARY KEY,
+    sales_return_id     VARCHAR2(50) NULL,
+    product_id          VARCHAR2(50) NULL,
+    mrp                 NUMBER,
+    purchase_price      NUMBER,
+    quantity            NUMBER,
+    discount_amount     NUMBER,
+    item_total          NUMBER,
+    qty_return          NUMBER,
+    reason              VARCHAR2(4000),
+    CONSTRAINT sufioun_fk_srd_mst FOREIGN KEY (sales_return_id) REFERENCES sufioun_sales_return_master(sales_return_id),
+    CONSTRAINT sufioun_fk_srd_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_sales_ret_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sales_ret_det_bi 
+BEFORE INSERT ON sufioun_sales_return_details FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.sales_return_det_id IS NULL THEN
+        :NEW.sales_return_det_id := 'SRD' || TO_CHAR(sufioun_sales_ret_det_seq.NEXTVAL); 
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_srd_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_sales_return_details
+FOR EACH ROW
+DECLARE
+    v_sales_return_id sufioun_sales_return_details.sales_return_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN
+        v_sales_return_id := :NEW.sales_return_id;
+    ELSE
+        v_sales_return_id := :OLD.sales_return_id;
+    END IF;
+    UPDATE sufioun_sales_return_master
+    SET upd_by = USER,
+        upd_dt = SYSDATE
+    WHERE sales_return_id = v_sales_return_id;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 26. sufioun_PRODUCT_ORDER_DETAIL
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_order_detail (
+    order_detail_id VARCHAR2(50) PRIMARY KEY,
+    order_id        VARCHAR2(50) NULL,
+    product_id      VARCHAR2(50) NULL,
+    mrp             NUMBER, 
+    purchase_price  NUMBER, 
+    quantity        NUMBER,
+    CONSTRAINT sufioun_fk_pod_mst FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id),
+    CONSTRAINT sufioun_fk_pod_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_order_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_order_det_bi 
+BEFORE INSERT ON sufioun_product_order_detail FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.order_detail_id IS NULL THEN
+        :NEW.order_detail_id := 'ODT' || TO_CHAR(sufioun_order_det_seq.NEXTVAL); 
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_order_det_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_order_detail
+FOR EACH ROW
+DECLARE
+    v_order_id sufioun_product_order_detail.order_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN
+        v_order_id := :NEW.order_id;
+    ELSE
+        v_order_id := :OLD.order_id;
+    END IF;
+    UPDATE sufioun_product_order_master
+    SET upd_by = USER,
+        upd_dt = SYSDATE
+    WHERE order_id = v_order_id;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_tri_total_price_compound
+FOR INSERT OR UPDATE OR DELETE ON sufioun_product_order_detail
+COMPOUND TRIGGER
+  TYPE t_order_id_list IS TABLE OF sufioun_product_order_detail.order_id%TYPE INDEX BY PLS_INTEGER;
+  v_order_ids t_order_id_list;
+  AFTER EACH ROW IS
+  BEGIN
+    IF INSERTING OR UPDATING THEN
+       v_order_ids(v_order_ids.COUNT + 1) := :NEW.order_id;
+    ELSIF DELETING THEN
+       v_order_ids(v_order_ids.COUNT + 1) := :OLD.order_id;
+    END IF;
+  END AFTER EACH ROW;
+  AFTER STATEMENT IS
+    v_total NUMBER;
+    v_grand_total NUMBER;
+  BEGIN
+    FOR i IN 1 .. v_order_ids.COUNT LOOP
+      SELECT NVL(SUM(purchase_price * quantity), 0)
+      INTO v_total
+      FROM sufioun_product_order_detail
+      WHERE order_id = v_order_ids(i);
+      
+      v_grand_total := v_total + (v_total * 0.10);
+
+      UPDATE sufioun_product_order_master
+      SET total_amount = v_total,
+          grand_total = v_grand_total
+      WHERE order_id = v_order_ids(i);
+    END LOOP;
+  END AFTER STATEMENT;
+END sufioun_tri_total_price_compound;
+/
+
+--------------------------------------------------------------------------------
+-- 27. sufioun_PRODUCT_RECEIVE_DETAILS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_receive_details (
+    receive_det_id   VARCHAR2(50) PRIMARY KEY,
+    receive_id       VARCHAR2(50) NULL,
+    product_id       VARCHAR2(50) NULL,
+    mrp              NUMBER,              
+    purchase_price   NUMBER,              
+    receive_quantity NUMBER,
+    CONSTRAINT sufioun_fk_prd_mst FOREIGN KEY (receive_id) REFERENCES sufioun_product_receive_master(receive_id),
+    CONSTRAINT sufioun_fk_prd_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_recv_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_recv_det_bi 
+BEFORE INSERT ON sufioun_product_receive_details FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.receive_det_id IS NULL THEN
+        :NEW.receive_det_id := 'RDT' || TO_CHAR(sufioun_recv_det_seq.NEXTVAL); 
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_tri_receive_total_amount
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_receive_details
+DECLARE
+BEGIN
+    FOR r IN (
+        SELECT DISTINCT receive_id FROM sufioun_product_receive_details
+    ) LOOP
+        UPDATE sufioun_product_receive_master m
+        SET m.total_amount = (
+                SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
+                FROM sufioun_product_receive_details d
+                WHERE d.receive_id = r.receive_id
+            ),
+            m.grand_total = (
+                SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
+                FROM sufioun_product_receive_details d
+                WHERE d.receive_id = r.receive_id
+            )
+            + NVL((
+                SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
+                       * NVL(m.vat, 0) / 100
+                FROM sufioun_product_receive_details d
+                WHERE d.receive_id = r.receive_id
+            ), 0)
+        WHERE m.receive_id = r.receive_id;
+    END LOOP;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_recv_det_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_receive_details
+FOR EACH ROW
+DECLARE
+    v_receive_id sufioun_product_receive_details.receive_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN
+        v_receive_id := :NEW.receive_id;
+    ELSE
+        v_receive_id := :OLD.receive_id;
+    END IF;
+    UPDATE sufioun_product_receive_master
+    SET upd_by = USER,
+        upd_dt = SYSDATE
+    WHERE receive_id = v_receive_id;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 28. sufioun_PRODUCT_RETURN_DETAILS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_product_return_details (
+    return_detail_id VARCHAR2(50) PRIMARY KEY,
+    return_id        VARCHAR2(50) NULL,
+    product_id       VARCHAR2(50) NULL,
+    mrp              NUMBER,              
+    purchase_price   NUMBER,              
+    return_quantity  NUMBER, 
+    reason           VARCHAR2(1000),
+    CONSTRAINT sufioun_fk_prdet_mst FOREIGN KEY (return_id) REFERENCES sufioun_product_return_master(return_id),
+    CONSTRAINT sufioun_fk_prdet_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_prod_ret_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_ret_det_bi BEFORE INSERT ON sufioun_product_return_details FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.return_detail_id IS NULL THEN
+        :NEW.return_detail_id := 'PRD' || TO_CHAR(sufioun_prod_ret_det_seq.NEXTVAL); 
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_tri_ret_total_price
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_return_details
+DECLARE
+BEGIN
+    FOR r IN (SELECT DISTINCT return_id FROM sufioun_product_return_details) LOOP
+        UPDATE sufioun_product_return_master m
+        SET m.total_amount = (
+                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0)
+                FROM sufioun_product_return_details d
+                WHERE d.return_id = r.return_id
+            ),
+            m.grand_total = (
+                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0)
+                FROM sufioun_product_return_details d
+                WHERE d.return_id = r.return_id
+            ) + NVL((
+                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0) * NVL(m.adjusted_vat,0) / 100
+                FROM sufioun_product_return_details d
+                WHERE d.return_id = r.return_id
+            ),0)
+        WHERE m.return_id = r.return_id;
+    END LOOP;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_prd_ret_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_return_details
+FOR EACH ROW
+DECLARE
+    v_return_id sufioun_product_return_details.return_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN v_return_id := :NEW.return_id;
+    ELSE v_return_id := :OLD.return_id; END IF;
+
+    UPDATE sufioun_product_return_master SET upd_by = USER, upd_dt = SYSDATE WHERE return_id = v_return_id;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 29. sufioun_EXPENSE_MASTER
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_expense_master (
+    expense_id      VARCHAR2(50) PRIMARY KEY,
+    expense_date    DATE,
+    department_id   VARCHAR2(100),
+    expense_type_id VARCHAR2(50),
+    expense_by      VARCHAR2(100),
+    expense_total   NUMBER,
+    status          NUMBER,
+    cre_by          VARCHAR2(100),
+    cre_dt          DATE,
+    upd_by          VARCHAR2(100),
+    upd_dt          DATE,
+    CONSTRAINT sufioun_fk_ex_mst FOREIGN KEY (expense_type_id) REFERENCES sufioun_expense_list(expense_type_id),
+    CONSTRAINT sufioun_fk_ex_dept FOREIGN KEY (department_id) REFERENCES sufioun_departments(department_id)
+);
+
+CREATE SEQUENCE sufioun_exp_mst_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_exp_mst_bi BEFORE INSERT OR UPDATE ON sufioun_expense_master FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.expense_id IS NULL THEN
+        :NEW.expense_id := 'EXM' || TO_CHAR(sufioun_exp_mst_seq.NEXTVAL); 
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 30. sufioun_EXPENSE_DETAILS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_expense_details (
+    expense_det_id    VARCHAR2(50) PRIMARY KEY,
+    expense_id        VARCHAR2(50) NOT NULL,
+    description       VARCHAR2(1000),
+    amount            NUMBER(15,2) DEFAULT 0,
+    CONSTRAINT sufioun_fk_ex_det_mst FOREIGN KEY (expense_id) REFERENCES sufioun_expense_master(expense_id)
+);
+
+CREATE SEQUENCE sufioun_exp_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_exp_det_bi BEFORE INSERT OR UPDATE ON sufioun_expense_details FOR EACH ROW
+BEGIN 
+    IF INSERTING AND :NEW.expense_det_id IS NULL THEN
+        :NEW.expense_det_id := 'EXD' || TO_CHAR(sufioun_exp_det_seq.NEXTVAL);
+    END IF; 
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_tri_expense_total
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_expense_details
+BEGIN
+   FOR r IN (SELECT DISTINCT expense_id FROM sufioun_expense_details) LOOP
+      UPDATE sufioun_expense_master m
+      SET m.expense_total = (SELECT NVL(SUM(d.amount), 0) FROM sufioun_expense_details d WHERE d.expense_id = r.expense_id)
+      WHERE m.expense_id = r.expense_id;
+   END LOOP;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 31. sufioun_DAMAGE_DETAIL 
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_damage_detail (
+    damage_detail_id VARCHAR2(50) PRIMARY KEY,
+    damage_id        VARCHAR2(50),
+    product_id       VARCHAR2(50),
+    mrp              NUMBER,
+    purchase_price   NUMBER,
+    damage_quantity  NUMBER,
+    reason           VARCHAR2(1000),
+    CONSTRAINT sufioun_fk_dmg_mst FOREIGN KEY (damage_id) REFERENCES sufioun_damage(damage_id),
+    CONSTRAINT sufioun_fk_dmg_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
+);
+
+CREATE SEQUENCE sufioun_damage_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_damage_det_bi BEFORE INSERT ON sufioun_damage_detail FOR EACH ROW 
+BEGIN 
+    IF INSERTING AND :NEW.damage_detail_id IS NULL THEN
+        :NEW.damage_detail_id := 'DDT' || TO_CHAR(sufioun_damage_det_seq.NEXTVAL);
+    END IF; 
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_dmg_master_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_damage_detail
+FOR EACH ROW
+DECLARE
+    v_damage_id sufioun_damage_detail.damage_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN v_damage_id := :NEW.damage_id;
+    ELSE v_damage_id := :OLD.damage_id; END IF;
+
+    UPDATE sufioun_damage SET upd_by = USER, upd_dt = SYSDATE WHERE damage_id = v_damage_id;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 32. sufioun_COM_USERS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_com_users (
+    user_id     VARCHAR2(50) PRIMARY KEY,
+    user_name   VARCHAR2(100) NOT NULL UNIQUE,
+    password    VARCHAR2(200) NOT NULL,
+    role        VARCHAR2(50) DEFAULT 'user' NOT NULL,
+    employee_id VARCHAR2(50),
+    status      NUMBER,
+    cre_by      VARCHAR2(100),
+    cre_dt      DATE,
+    upd_by      VARCHAR2(100),
+    upd_dt      DATE,
+    CONSTRAINT sufioun_fk_users_emp FOREIGN KEY (employee_id) REFERENCES sufioun_employees(employee_id) ON DELETE SET NULL
+);
+
+CREATE SEQUENCE sufioun_users_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_users_bi
+BEFORE INSERT OR UPDATE ON sufioun_com_users FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.user_id IS NULL THEN
+        :NEW.user_id := UPPER(SUBSTR(TRIM(:NEW.user_name), 1, 3)) || TO_CHAR(sufioun_users_seq.NEXTVAL);
+    END IF;
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER; :NEW.upd_dt := SYSDATE;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 33. sufioun_PAYMENTS
+--------------------------------------------------------------------------------
+CREATE TABLE sufioun_payments (
+    payment_id   VARCHAR2(50) PRIMARY KEY,
+    payment_date DATE NOT NULL,
+    amount       NUMBER NOT NULL CHECK (amount > 0),
+    supplier_id  VARCHAR2(50) REFERENCES sufioun_suppliers(supplier_id),
+    payment_type VARCHAR2(50),
+    CONSTRAINT sufioun_chk_pay_type CHECK (UPPER(payment_type) IN ('CASH','ONLINE','BANK'))
+);
+
+CREATE SEQUENCE sufioun_payments_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
+
+CREATE OR REPLACE TRIGGER sufioun_trg_payments_bi BEFORE INSERT OR UPDATE ON sufioun_payments FOR EACH ROW
+BEGIN
+    IF INSERTING AND :NEW.payment_id IS NULL THEN
+        :NEW.payment_id := 'PAY' || TO_CHAR(sufioun_payments_seq.NEXTVAL);
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_PAYMENTS_SUPPLIER_AUDIT
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_pay_sup_audit
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_payments
+FOR EACH ROW
+DECLARE
+    v_supplier_id sufioun_payments.supplier_id%TYPE;
+BEGIN
+    IF INSERTING OR UPDATING THEN
+        v_supplier_id := :NEW.supplier_id;
+    ELSE
+        v_supplier_id := :OLD.supplier_id;
+    END IF;
+
+    IF v_supplier_id IS NOT NULL THEN
+        UPDATE sufioun_suppliers
+        SET upd_by = USER,
+            upd_dt = SYSDATE
+        WHERE supplier_id = v_supplier_id;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_SUPPLIERS_PAY_TOTAL (COMPOUND TRIGGER)
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_sup_pay_total
+FOR INSERT OR UPDATE OR DELETE ON sufioun_payments
+COMPOUND TRIGGER
+  TYPE t_supplier IS TABLE OF sufioun_payments.supplier_id%TYPE;
+  g_suppliers t_supplier := t_supplier();
+  BEFORE EACH ROW IS
+  BEGIN
+    IF INSERTING OR UPDATING OR DELETING THEN
+      g_suppliers.EXTEND;
+      g_suppliers(g_suppliers.COUNT) := :NEW.supplier_id;
+    END IF;
+  END BEFORE EACH ROW;
+  AFTER STATEMENT IS
+  BEGIN
+    FOR i IN 1 .. g_suppliers.COUNT LOOP
+      BEGIN
+        UPDATE sufioun_suppliers s
+        SET s.pay_total = NVL((SELECT SUM(amount)
+                               FROM sufioun_payments
+                               WHERE supplier_id = g_suppliers(i)), 0)
+        WHERE s.supplier_id = g_suppliers(i);
+      EXCEPTION
+        WHEN NO_DATA_FOUND THEN NULL;
+      END;
+    END LOOP;
+  END AFTER STATEMENT;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_SUPPLIERS_FROM_RECEIVE
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_sup_from_recv
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_receive_master
+BEGIN
+   UPDATE sufioun_suppliers s
+   SET
+      s.purchase_total =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0),
+      s.pay_total =
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0),
+      s.due =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0);
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_SUPPLIERS_FROM_RETURN
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_sup_from_ret
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_return_master
+BEGIN
+   UPDATE sufioun_suppliers s
+   SET
+      s.purchase_total =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0),
+      s.pay_total =
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0),
+      s.due =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0);
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_SUPPLIERS_FROM_PAYMENTS
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_sup_from_pay
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_payments
+BEGIN
+   UPDATE sufioun_suppliers s
+   SET
+      s.purchase_total =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0),
+      s.pay_total =
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0),
+      s.due =
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_receive_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(grand_total) FROM sufioun_product_return_master WHERE supplier_id = s.supplier_id), 0)
+         -
+         NVL((SELECT SUM(amount) FROM sufioun_payments WHERE supplier_id = s.supplier_id), 0);
+END;
+/
+
+--------------------------------------------------------------------------------
+-- sufioun_SERVICE_MASTER_BI (Warranty Logic)
+--------------------------------------------------------------------------------
+CREATE OR REPLACE TRIGGER sufioun_trg_svc_master_bi
+BEFORE INSERT OR UPDATE ON sufioun_service_master
+FOR EACH ROW
+DECLARE 
+    v_inv_date DATE; 
+    v_warranty NUMBER;
+BEGIN
+    IF INSERTING AND :NEW.service_id IS NULL THEN
+        :NEW.service_id := 'SVM' || TO_CHAR(sufioun_service_master_seq.NEXTVAL);
+    END IF;
+
+    IF INSERTING THEN
+        IF :NEW.status IS NULL THEN :NEW.status := 1; END IF;
+        IF :NEW.cre_by IS NULL THEN :NEW.cre_by := USER; END IF;
+        IF :NEW.cre_dt IS NULL THEN :NEW.cre_dt := SYSDATE; END IF;
+    ELSIF UPDATING THEN
+        :NEW.upd_by := USER;
+        :NEW.upd_dt := SYSDATE;
+    END IF;
+
+    IF INSERTING AND :NEW.invoice_id IS NOT NULL THEN
+        BEGIN
+            SELECT m.invoice_date, p.warranty
+            INTO v_inv_date, v_warranty
+            FROM sufioun_sales_master m
+            JOIN sufioun_sales_detail d ON m.invoice_id = d.invoice_id
+            JOIN sufioun_products p ON d.product_id = p.product_id AND p.status = 1
+            WHERE m.invoice_id = :NEW.invoice_id
+            AND ROWNUM = 1;
+
+            IF v_inv_date + (v_warranty * 30) >= SYSDATE THEN
+                :NEW.warranty_applicable := 'Y';
+            ELSE
+                :NEW.warranty_applicable := 'N';
+            END IF;
+        EXCEPTION
+            WHEN OTHERS THEN
+                :NEW.warranty_applicable := 'N';
+        END;
+    END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 34. sufioun_STOCK_MANAGEMENT_TRIGGERS
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE sufioun_update_stock_qty (
+    p_product_id IN VARCHAR2,
+    p_quantity   IN NUMBER
+) IS
+    v_count       NUMBER;
+    v_supplier_id VARCHAR2(50);
+    v_cat_id      VARCHAR2(50);
+    v_sub_cat_id  VARCHAR2(50);
+BEGIN
+    BEGIN
+        SELECT supplier_id, category_id, sub_cat_id 
+        INTO v_supplier_id, v_cat_id, v_sub_cat_id
+        FROM sufioun_products 
+        WHERE product_id = p_product_id;
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+        v_supplier_id := NULL; v_cat_id := NULL; v_sub_cat_id := NULL;
+    END;
+
+    SELECT COUNT(*) INTO v_count FROM sufioun_stock WHERE product_id = p_product_id;
+    
+    IF v_count > 0 THEN
+        UPDATE sufioun_stock 
+        SET quantity = quantity + p_quantity,
+            supplier_id = v_supplier_id,
+            product_cat_id = v_cat_id,
+            sub_cat_id = v_sub_cat_id,
+            last_update = SYSTIMESTAMP
+        WHERE product_id = p_product_id;
+    ELSE
+        IF p_quantity > 0 THEN
+            INSERT INTO sufioun_stock (product_id, supplier_id, product_cat_id, sub_cat_id, quantity)
+            VALUES (p_product_id, v_supplier_id, v_cat_id, v_sub_cat_id, p_quantity);
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_receive
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_receive_details
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity);
+    ELSIF DELETING THEN
+        sufioun_update_stock_qty(:OLD.product_id, -:OLD.receive_quantity);
+    ELSIF UPDATING THEN
+        IF :OLD.product_id != :NEW.product_id THEN
+            sufioun_update_stock_qty(:OLD.product_id, -:OLD.receive_quantity);
+            sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity);
+        ELSE
+            sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity - :OLD.receive_quantity);
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_sales
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_sales_detail
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        sufioun_update_stock_qty(:NEW.product_id, -:NEW.quantity);
+    ELSIF DELETING THEN
+        sufioun_update_stock_qty(:OLD.product_id, :OLD.quantity);
+    ELSIF UPDATING THEN
+        IF :OLD.product_id != :NEW.product_id THEN
+            sufioun_update_stock_qty(:OLD.product_id, :OLD.quantity);
+            sufioun_update_stock_qty(:NEW.product_id, -:NEW.quantity);
+        ELSE
+            sufioun_update_stock_qty(:NEW.product_id, -(:NEW.quantity - :OLD.quantity));
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_sales_ret
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_sales_return_details
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        sufioun_update_stock_qty(:NEW.product_id, NVL(:NEW.qty_return, 0));
+    ELSIF DELETING THEN
+        sufioun_update_stock_qty(:OLD.product_id, -NVL(:OLD.qty_return, 0));
+    ELSIF UPDATING THEN
+        IF :OLD.product_id != :NEW.product_id THEN
+            sufioun_update_stock_qty(:OLD.product_id, -NVL(:OLD.qty_return, 0));
+            sufioun_update_stock_qty(:NEW.product_id, NVL(:NEW.qty_return, 0));
+        ELSE
+            sufioun_update_stock_qty(:NEW.product_id, NVL(:NEW.qty_return, 0) - NVL(:OLD.qty_return, 0));
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stk_pur_ret
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_product_return_details
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        sufioun_update_stock_qty(:NEW.product_id, -NVL(:NEW.return_quantity, 0));
+    ELSIF DELETING THEN
+        sufioun_update_stock_qty(:OLD.product_id, NVL(:OLD.return_quantity, 0));
+    ELSIF UPDATING THEN
+        IF :OLD.product_id != :NEW.product_id THEN
+            sufioun_update_stock_qty(:OLD.product_id, NVL(:OLD.return_quantity, 0));
+            sufioun_update_stock_qty(:NEW.product_id, -NVL(:NEW.return_quantity, 0));
+        ELSE
+            sufioun_update_stock_qty(:NEW.product_id, -(NVL(:NEW.return_quantity, 0) - NVL(:OLD.return_quantity, 0)));
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_damage
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_damage_detail
+FOR EACH ROW
+BEGIN
+    IF INSERTING THEN
+        sufioun_update_stock_qty(:NEW.product_id, -:NEW.damage_quantity);
+    ELSIF DELETING THEN
+        sufioun_update_stock_qty(:OLD.product_id, :OLD.damage_quantity);
+    ELSIF UPDATING THEN
+        IF :OLD.product_id != :NEW.product_id THEN
+            sufioun_update_stock_qty(:OLD.product_id, :OLD.damage_quantity);
+            sufioun_update_stock_qty(:NEW.product_id, -:NEW.damage_quantity);
+        ELSE
+            sufioun_update_stock_qty(:NEW.product_id, -(:NEW.damage_quantity - :OLD.damage_quantity));
+        END IF;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER sufioun_trg_sync_prod_to_stk
+AFTER UPDATE OF supplier_id, category_id, sub_cat_id ON sufioun_products
+FOR EACH ROW
+BEGIN
+    UPDATE sufioun_stock 
+    SET supplier_id = :NEW.supplier_id,
+        product_cat_id = :NEW.category_id,
+        sub_cat_id = :NEW.sub_cat_id
+    WHERE product_id = :NEW.product_id;
+END;
+/
+
+-- =============================================================================
+-- PART 3: TEST DATA INSERTION SCRIPT (DML)
+-- Context: Electronics Sales and Service
+-- =============================================================================
+
+--------------------------------------------------------------------------------
+-- 01. sufioun_COMPANY
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-01', 'Sufioun Electronics HQ', '01711000001', 'hq@sufioun.com', 'Dhaka, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-02', 'Sufioun Branch North', '01711000002', 'north@sufioun.com', 'Uttara, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-03', 'Sufioun Branch South', '01711000003', 'south@sufioun.com', 'Jatrabari, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-04', 'Sufioun Branch East', '01711000004', 'east@sufioun.com', 'Badda, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-05', 'Sufioun Branch West', '01711000005', 'west@sufioun.com', 'Mirpur, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-06', 'Sufioun Service Center A', '01711000006', 'srv_a@sufioun.com', 'Gulshan, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-07', 'Sufioun Service Center B', '01711000007', 'srv_b@sufioun.com', 'Banani, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-08', 'Sufioun Warehouse Main', '01711000008', 'wh_main@sufioun.com', 'Gazipur, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-09', 'Sufioun Corporate', '01711000009', 'corp@sufioun.com', 'Motijheel, BD', 1);
+INSERT INTO sufioun_company (company_id, company_name, phone_no, email, address, status) VALUES ('COM-10', 'Sufioun Outlet Prime', '01711000010', 'prime@sufioun.com', 'Dhanmondi, BD', 1);
+
+--------------------------------------------------------------------------------
+-- 02. sufioun_JOBS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-01', 'MGR', 'Branch Manager', 'A', 50000, 100000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-02', 'SALES', 'Sales Representative', 'B', 20000, 45000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-03', 'TECH', 'Senior Technician', 'B', 30000, 60000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-04', 'JTECH', 'Junior Technician', 'C', 15000, 25000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-05', 'CASH', 'Cashier', 'C', 18000, 30000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-06', 'HR', 'HR Officer', 'B', 25000, 50000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-07', 'INV', 'Inventory Clerk', 'C', 15000, 25000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-08', 'IT', 'IT Support', 'B', 25000, 45000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-09', 'DEL', 'Delivery Executive', 'C', 12000, 20000);
+INSERT INTO sufioun_jobs (job_id, job_code, job_title, job_grade, min_salary, max_salary) VALUES ('JOB-10', 'DIR', 'Director', 'A', 100000, 300000);
+
+--------------------------------------------------------------------------------
+-- 03. sufioun_CUSTOMERS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-01', 'Rahim Uddin', '01811000001', 'Dhaka', 10);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-02', 'Karim Hasan', '01811000002', 'Chittagong', 5);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-03', 'Salma Begum', '01811000003', 'Sylhet', 20);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-04', 'Tariq Islam', '01811000004', 'Rajshahi', 0);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-05', 'Nusrat Jahan', '01811000005', 'Khulna', 15);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-06', 'Jalal Ahmed', '01811000006', 'Barisal', 0);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-07', 'Farhana Akter', '01811000007', 'Rangpur', 50);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-08', 'Asif Mahmud', '01811000008', 'Mymensingh', 5);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-09', 'Laila Chowdhury', '01811000009', 'Dhaka', 30);
+INSERT INTO sufioun_customers (customer_id, customer_name, phone_no, city, rewards) VALUES ('CUST-10', 'Rafiqul Islam', '01811000010', 'Comilla', 10);
+
+--------------------------------------------------------------------------------
+-- 04. sufioun_PARTS_CATEGORY
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-01', 'Display Panels');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-02', 'Batteries');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-03', 'Motherboards');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-04', 'Power Supplies');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-05', 'Cooling Fans');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-06', 'Compressors');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-07', 'Keyboards');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-08', 'Charging Ports');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-09', 'Camera Modules');
+INSERT INTO sufioun_parts_category (parts_cat_id, parts_cat_name) VALUES ('PCAT-10', 'Capacitors/Resistors');
+
+--------------------------------------------------------------------------------
+-- 05. sufioun_PRODUCT_CATEGORIES
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-01', 'Smartphones');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-02', 'Laptops');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-03', 'Televisions');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-04', 'Air Conditioners');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-05', 'Refrigerators');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-06', 'Washing Machines');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-07', 'Microwave Ovens');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-08', 'Smartwatches');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-09', 'Audio Devices');
+INSERT INTO sufioun_product_categories (product_cat_id, product_cat_name) VALUES ('CAT-10', 'Accessories');
+
+--------------------------------------------------------------------------------
+-- 06. sufioun_BRAND
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-01', 'Samsung');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-02', 'Apple');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-03', 'Sony');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-04', 'LG');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-05', 'Dell');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-06', 'HP');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-07', 'Walton');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-08', 'Gree');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-09', 'Vision');
+INSERT INTO sufioun_brand (brand_id, brand_name) VALUES ('BRD-10', 'Bose');
+
+--------------------------------------------------------------------------------
+-- 07. sufioun_SUPPLIERS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-01', 'Global Electronics Ltd', '01911000001', 'Mr. X');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-02', 'Tech Hub Distributors', '01911000002', 'Mr. Y');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-03', 'Mega Parts BD', '01911000003', 'Mr. Z');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-04', 'Electro Supply Co.', '01911000004', 'Ms. A');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-05', 'Prime Gadgets', '01911000005', 'Mr. B');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-06', 'National Importers', '01911000006', 'Mr. C');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-07', 'Star Technologies', '01911000007', 'Ms. D');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-08', 'Green Appliances', '01911000008', 'Mr. E');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-09', 'Smart Solutions', '01911000009', 'Mr. F');
+INSERT INTO sufioun_suppliers (supplier_id, supplier_name, phone_no, contact_person) VALUES ('SUP-10', 'BD Wholesale Elecs', '01911000010', 'Ms. G');
+
+--------------------------------------------------------------------------------
+-- 08. sufioun_SERVICE_LIST
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-01', 'Display Replacement', 1500);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-02', 'Battery Replacement', 500);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-03', 'General Servicing (AC)', 2000);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-04', 'OS Installation', 800);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-05', 'Motherboard Repair', 3500);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-06', 'Gas Refill (AC/Fridge)', 2500);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-07', 'Water Damage Repair', 4000);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-08', 'Speaker/Mic Fix', 600);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-09', 'Compressor Check', 1000);
+INSERT INTO sufioun_service_list (servicelist_id, service_name, service_cost) VALUES ('SRV-10', 'Diagnostic/Inspection', 300);
+
+--------------------------------------------------------------------------------
+-- 09. sufioun_EXPENSE_LIST
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-01', 'Office Rent');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-02', 'Electricity Bill');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-03', 'Internet Bill');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-04', 'Staff Salary');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-05', 'Marketing & Ads');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-06', 'Transportation');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-07', 'Stationery');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-08', 'Refreshments');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-09', 'Maintenance');
+INSERT INTO sufioun_expense_list (expense_type_id, type_name) VALUES ('EXP-10', 'Miscellaneous');
+
+--------------------------------------------------------------------------------
+-- 10. sufioun_SUB_CATEGORIES
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-01', 'Android Phones', 'CAT-01');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-02', 'iPhones', 'CAT-01');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-03', 'Gaming Laptops', 'CAT-02');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-04', 'Business Laptops', 'CAT-02');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-05', 'Smart TVs', 'CAT-03');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-06', 'Split ACs', 'CAT-04');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-07', 'Frost Fridges', 'CAT-05');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-08', 'Front Load Washers', 'CAT-06');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-09', 'Fitness Bands', 'CAT-08');
+INSERT INTO sufioun_sub_categories (sub_cat_id, sub_cat_name, product_cat_id) VALUES ('SCAT-10', 'Bluetooth Earbuds', 'CAT-09');
+
+--------------------------------------------------------------------------------
+-- 11. sufioun_PARTS 
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-01', 'OLED Screen 6.1"', 'PCAT-01', 5000, 7500);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-02', 'LCD Panel 15.6"', 'PCAT-01', 4000, 5500);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-03', '4000mAh Phone Battery', 'PCAT-02', 800, 1500);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-04', 'Laptop Battery 3-Cell', 'PCAT-02', 2000, 3500);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-05', 'AC Compressor 1.5T', 'PCAT-06', 8000, 12000);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-06', 'Laptop Keyboard Backlit', 'PCAT-07', 1500, 2500);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-07', 'Type-C Charging Port', 'PCAT-08', 200, 600);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-08', '12MP Camera Lens', 'PCAT-09', 1200, 2000);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-09', 'TV Power Supply Board', 'PCAT-04', 2500, 4000);
+INSERT INTO sufioun_parts (parts_id, parts_name, parts_cat_id, purchase_price, mrp) VALUES ('PRT-10', 'CPU Cooling Fan', 'PCAT-05', 500, 1000);
+
+--------------------------------------------------------------------------------
+-- 12. sufioun_DEPARTMENTS 
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-01', 'Sales', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-02', 'Service & Repair', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-03', 'Human Resources', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-04', 'Accounts & Finance', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-05', 'Inventory & Logistics', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-06', 'IT Support', 'COM-01');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-07', 'Sales - North', 'COM-02');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-08', 'Service - North', 'COM-02');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-09', 'Management', 'COM-09');
+INSERT INTO sufioun_departments (department_id, department_name, company_id) VALUES ('DPT-10', 'Marketing', 'COM-09');
+
+--------------------------------------------------------------------------------
+-- 13. sufioun_EMPLOYEES 
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-01', 'Tariq', 'Zia', 'JOB-10', 'DPT-09', 150000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-02', 'Kamal', 'Hossain', 'JOB-01', 'DPT-01', 60000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-03', 'Abdur', 'Rahman', 'JOB-02', 'DPT-01', 30000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-04', 'Sumon', 'Ali', 'JOB-03', 'DPT-02', 45000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-05', 'Nazmul', 'Haque', 'JOB-04', 'DPT-02', 20000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-06', 'Rubel', 'Mia', 'JOB-05', 'DPT-04', 22000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-07', 'Ayesha', 'Siddiqa', 'JOB-06', 'DPT-03', 35000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-08', 'Faruk', 'Ahmed', 'JOB-07', 'DPT-05', 18000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-09', 'Sajid', 'Hasan', 'JOB-08', 'DPT-06', 30000);
+INSERT INTO sufioun_employees (employee_id, first_name, last_name, job_id, department_id, salary) VALUES ('EMP-10', 'Anis', 'ur Rahman', 'JOB-09', 'DPT-05', 14000);
+
+-- Set EMP-01 as the manager for the departments
+UPDATE sufioun_departments SET manager_id = 'EMP-01';
+
+--------------------------------------------------------------------------------
+-- 14. sufioun_COM_USERS 
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-01', 'admin', '12345', 'admin', 'EMP-01');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-02', 'kamal_mgr', '12345', 'manager', 'EMP-02');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-03', 'abdur_sales', '12345', 'user', 'EMP-03');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-04', 'sumon_tech', '12345', 'user', 'EMP-04');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-05', 'nazmul_jtech', '12345', 'user', 'EMP-05');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-06', 'rubel_cash', '12345', 'user', 'EMP-06');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-07', 'ayesha_hr', '12345', 'user', 'EMP-07');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-08', 'faruk_inv', '12345', 'user', 'EMP-08');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-09', 'sajid_it', '12345', 'user', 'EMP-09');
+INSERT INTO sufioun_com_users (user_id, user_name, password, role, employee_id) VALUES ('USR-10', 'anis_del', '12345', 'user', 'EMP-10');
+
+--------------------------------------------------------------------------------
+-- 15. sufioun_PRODUCTS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-01', 'Galaxy S23', 'SUP-01', 'CAT-01', 'SCAT-01', 'BRD-01', 70000, 85000, 12);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-02', 'iPhone 14 Pro', 'SUP-02', 'CAT-01', 'SCAT-02', 'BRD-02', 110000, 130000, 12);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-03', 'Bravia 55" 4K', 'SUP-03', 'CAT-03', 'SCAT-05', 'BRD-03', 45000, 55000, 24);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-04', 'LG Dual Inverter 1.5T', 'SUP-04', 'CAT-04', 'SCAT-06', 'BRD-04', 50000, 65000, 60);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-05', 'Inspiron 15', 'SUP-05', 'CAT-02', 'SCAT-04', 'BRD-05', 40000, 52000, 12);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-06', 'Pavilion Gaming', 'SUP-06', 'CAT-02', 'SCAT-03', 'BRD-06', 75000, 90000, 12);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-07', 'Walton Primo X7', 'SUP-07', 'CAT-01', 'SCAT-01', 'BRD-07', 15000, 19999, 12);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-08', 'Gree 2.0 Ton AC', 'SUP-08', 'CAT-04', 'SCAT-06', 'BRD-08', 65000, 80000, 60);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-09', 'Vision 43" Smart TV', 'SUP-09', 'CAT-03', 'SCAT-05', 'BRD-09', 22000, 28000, 24);
+INSERT INTO sufioun_products (product_id, product_name, supplier_id, category_id, sub_cat_id, brand_id, purchase_price, mrp, warranty) VALUES ('PROD-10', 'Bose QuietComfort', 'SUP-10', 'CAT-09', 'SCAT-10', 'BRD-10', 25000, 32000, 12);
+
+--------------------------------------------------------------------------------
+-- 16. sufioun_PRODUCT_ORDER_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-01', 'SUP-01', 'EMP-01', '2025-01-01');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-02', 'SUP-02', 'EMP-01', '2025-01-02');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-03', 'SUP-03', 'EMP-02', '2025-01-03');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-04', 'SUP-04', 'EMP-02', '2025-01-04');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-05', 'SUP-05', 'EMP-08', '2025-01-05');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-06', 'SUP-06', 'EMP-08', '2025-01-06');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-07', 'SUP-07', 'EMP-08', '2025-01-07');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-08', 'SUP-08', 'EMP-08', '2025-01-08');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-09', 'SUP-09', 'EMP-08', '2025-01-09');
+INSERT INTO sufioun_product_order_master (order_id, supplier_id, order_by, order_date) VALUES ('ORD-10', 'SUP-10', 'EMP-08', '2025-01-10');
+
+--------------------------------------------------------------------------------
+-- 17. sufioun_PRODUCT_ORDER_DETAIL
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-01', 'ORD-01', 'PROD-01', 70000, 85000, 50);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-02', 'ORD-02', 'PROD-02', 110000, 130000, 30);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-03', 'ORD-03', 'PROD-03', 45000, 55000, 40);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-04', 'ORD-04', 'PROD-04', 50000, 65000, 20);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-05', 'ORD-05', 'PROD-05', 40000, 52000, 60);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-06', 'ORD-06', 'PROD-06', 75000, 90000, 15);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-07', 'ORD-07', 'PROD-07', 15000, 19999, 100);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-08', 'ORD-08', 'PROD-08', 65000, 80000, 25);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-09', 'ORD-09', 'PROD-09', 22000, 28000, 50);
+INSERT INTO sufioun_product_order_detail (order_detail_id, order_id, product_id, purchase_price, mrp, quantity) VALUES ('ODT-10', 'ORD-10', 'PROD-10', 25000, 32000, 40);
+
+--------------------------------------------------------------------------------
+-- 18. sufioun_PRODUCT_RECEIVE_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-01', 'ORD-01', 'SUP-01', 'SINV-001', 'EMP-08', '2025-01-11');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-02', 'ORD-02', 'SUP-02', 'SINV-002', 'EMP-08', '2025-01-12');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-03', 'ORD-03', 'SUP-03', 'SINV-003', 'EMP-08', '2025-01-13');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-04', 'ORD-04', 'SUP-04', 'SINV-004', 'EMP-08', '2025-01-14');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-05', 'ORD-05', 'SUP-05', 'SINV-005', 'EMP-08', '2025-01-15');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-06', 'ORD-06', 'SUP-06', 'SINV-006', 'EMP-08', '2025-01-16');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-07', 'ORD-07', 'SUP-07', 'SINV-007', 'EMP-08', '2025-01-17');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-08', 'ORD-08', 'SUP-08', 'SINV-008', 'EMP-08', '2025-01-18');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-09', 'ORD-09', 'SUP-09', 'SINV-009', 'EMP-08', '2025-01-19');
+INSERT INTO sufioun_product_receive_master (receive_id, order_id, supplier_id, sup_invoice_id, received_by, receive_date) VALUES ('RCV-10', 'ORD-10', 'SUP-10', 'SINV-010', 'EMP-08', '2025-01-20');
+
+--------------------------------------------------------------------------------
+-- 19. sufioun_PRODUCT_RECEIVE_DETAILS (Triggers stock updates)
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-01', 'RCV-01', 'PROD-01', 70000, 85000, 50);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-02', 'RCV-02', 'PROD-02', 110000, 130000, 30);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-03', 'RCV-03', 'PROD-03', 45000, 55000, 40);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-04', 'RCV-04', 'PROD-04', 50000, 65000, 20);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-05', 'RCV-05', 'PROD-05', 40000, 52000, 60);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-06', 'RCV-06', 'PROD-06', 75000, 90000, 15);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-07', 'RCV-07', 'PROD-07', 15000, 19999, 100);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-08', 'RCV-08', 'PROD-08', 65000, 80000, 25);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-09', 'RCV-09', 'PROD-09', 22000, 28000, 50);
+INSERT INTO sufioun_product_receive_details (receive_det_id, receive_id, product_id, purchase_price, mrp, receive_quantity) VALUES ('RDT-10', 'RCV-10', 'PROD-10', 25000, 32000, 40);
+
+--------------------------------------------------------------------------------
+-- 20. sufioun_PAYMENTS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-01', '2025-01-21', 1000000, 'SUP-01', 'BANK');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-02', '2025-01-22', 1500000, 'SUP-02', 'BANK');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-03', '2025-01-23', 500000, 'SUP-03', 'ONLINE');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-04', '2025-01-24', 400000, 'SUP-04', 'CASH');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-05', '2025-01-25', 1200000, 'SUP-05', 'BANK');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-06', '2025-01-26', 800000, 'SUP-06', 'BANK');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-07', '2025-01-27', 500000, 'SUP-07', 'CASH');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-08', '2025-01-28', 700000, 'SUP-08', 'ONLINE');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-09', '2025-01-29', 500000, 'SUP-09', 'BANK');
+INSERT INTO sufioun_payments (payment_id, payment_date, amount, supplier_id, payment_type) VALUES ('PAY-10', '2025-01-30', 400000, 'SUP-10', 'CASH');
+
+--------------------------------------------------------------------------------
+-- 21. sufioun_SALES_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-01', '2025-02-01', 'CUST-01', 'EMP-03', 500);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-02', '2025-02-02', 'CUST-02', 'EMP-03', 1000);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-03', '2025-02-03', 'CUST-03', 'EMP-03', 0);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-04', '2025-02-04', 'CUST-04', 'EMP-03', 2000);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-05', '2025-02-05', 'CUST-05', 'EMP-03', 0);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-06', '2025-02-06', 'CUST-06', 'EMP-03', 1500);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-07', '2025-02-07', 'CUST-07', 'EMP-03', 500);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-08', '2025-02-08', 'CUST-08', 'EMP-03', 0);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-09', '2025-02-09', 'CUST-09', 'EMP-03', 0);
+INSERT INTO sufioun_sales_master (invoice_id, invoice_date, customer_id, sales_by, discount) VALUES ('INV-10', '2025-02-10', 'CUST-10', 'EMP-03', 3000);
+
+--------------------------------------------------------------------------------
+-- 22. sufioun_SALES_DETAIL (Triggers stock updates)
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-01', 'INV-01', 'PROD-01', 70000, 85000, 1);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-02', 'INV-02', 'PROD-02', 110000, 130000, 2);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-03', 'INV-03', 'PROD-03', 45000, 55000, 1);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-04', 'INV-04', 'PROD-04', 50000, 65000, 3);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-05', 'INV-05', 'PROD-05', 40000, 52000, 1);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-06', 'INV-06', 'PROD-06', 75000, 90000, 1);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-07', 'INV-07', 'PROD-07', 15000, 19999, 5);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-08', 'INV-08', 'PROD-08', 65000, 80000, 2);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-09', 'INV-09', 'PROD-09', 22000, 28000, 4);
+INSERT INTO sufioun_sales_detail (sales_det_id, invoice_id, product_id, purchase_price, mrp, quantity) VALUES ('SLD-10', 'INV-10', 'PROD-10', 25000, 32000, 2);
+
+--------------------------------------------------------------------------------
+-- 23. sufioun_SALES_RETURN_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-01', 'INV-07', 'CUST-07', '2025-02-15');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-02', 'INV-09', 'CUST-09', '2025-02-16');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-03', 'INV-02', 'CUST-02', '2025-02-17');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-04', 'INV-10', 'CUST-10', '2025-02-18');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-05', 'INV-04', 'CUST-04', '2025-02-19');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-06', 'INV-08', 'CUST-08', '2025-02-20');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-07', 'INV-05', 'CUST-05', '2025-02-21');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-08', 'INV-06', 'CUST-06', '2025-02-22');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-09', 'INV-01', 'CUST-01', '2025-02-23');
+INSERT INTO sufioun_sales_return_master (sales_return_id, invoice_id, customer_id, return_date) VALUES ('SRT-10', 'INV-03', 'CUST-03', '2025-02-24');
+
+--------------------------------------------------------------------------------
+-- 24. sufioun_SALES_RETURN_DETAILS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-01', 'SRT-01', 'PROD-07', 19999, 15000, 5, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-02', 'SRT-02', 'PROD-09', 28000, 22000, 4, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-03', 'SRT-03', 'PROD-02', 130000, 110000, 2, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-04', 'SRT-04', 'PROD-10', 32000, 25000, 2, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-05', 'SRT-05', 'PROD-04', 65000, 50000, 3, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-06', 'SRT-06', 'PROD-08', 80000, 65000, 2, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-07', 'SRT-07', 'PROD-05', 52000, 40000, 1, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-08', 'SRT-08', 'PROD-06', 90000, 75000, 1, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-09', 'SRT-09', 'PROD-01', 85000, 70000, 1, 1);
+INSERT INTO sufioun_sales_return_details (sales_return_det_id, sales_return_id, product_id, mrp, purchase_price, quantity, qty_return) VALUES ('SRD-10', 'SRT-10', 'PROD-03', 55000, 45000, 1, 1);
+
+--------------------------------------------------------------------------------
+-- 25. sufioun_SERVICE_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-01', '2025-03-01', 'CUST-01', 'INV-01', 'EMP-04');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-02', '2025-03-02', 'CUST-02', 'INV-02', 'EMP-05');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-03', '2025-03-03', 'CUST-03', 'INV-03', 'EMP-04');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-04', '2025-03-04', 'CUST-04', 'INV-04', 'EMP-05');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-05', '2025-03-05', 'CUST-05', 'INV-05', 'EMP-04');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-06', '2025-03-06', 'CUST-06', 'INV-06', 'EMP-05');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-07', '2025-03-07', 'CUST-07', 'INV-07', 'EMP-04');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-08', '2025-03-08', 'CUST-08', 'INV-08', 'EMP-05');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-09', '2025-03-09', 'CUST-09', 'INV-09', 'EMP-04');
+INSERT INTO sufioun_service_master (service_id, service_date, customer_id, invoice_id, service_by) VALUES ('SVM-10', '2025-03-10', 'CUST-10', 'INV-10', 'EMP-05');
+
+--------------------------------------------------------------------------------
+-- 26. sufioun_SERVICE_DETAILS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-01', 'SVM-01', 'PROD-01', 'SRV-01', 'PRT-01', 1500, 7500, 'N');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-02', 'SVM-02', 'PROD-02', 'SRV-02', 'PRT-03', 500, 1500, 'Y');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-03', 'SVM-03', 'PROD-03', 'SRV-05', 'PRT-09', 3500, 4000, 'N');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-04', 'SVM-04', 'PROD-04', 'SRV-03', 'PRT-05', 2000, 12000, 'Y');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-05', 'SVM-05', 'PROD-05', 'SRV-04', NULL, 800, 0, 'Y');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-06', 'SVM-06', 'PROD-06', 'SRV-07', 'PRT-06', 4000, 2500, 'N');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-07', 'SVM-07', 'PROD-07', 'SRV-08', 'PRT-08', 600, 2000, 'Y');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-08', 'SVM-08', 'PROD-08', 'SRV-06', 'PRT-05', 2500, 12000, 'N');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-09', 'SVM-09', 'PROD-09', 'SRV-10', NULL, 300, 0, 'Y');
+INSERT INTO sufioun_service_details (service_det_id, service_id, product_id, servicelist_id, parts_id, service_charge, parts_price, warranty_status) VALUES ('SDT-10', 'SVM-10', 'PROD-10', 'SRV-08', 'PRT-07', 600, 600, 'Y');
+
+--------------------------------------------------------------------------------
+-- 27. sufioun_PRODUCT_RETURN_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-01', 'SUP-01', 'RCV-01', 'ORD-01', '2025-01-25', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-02', 'SUP-02', 'RCV-02', 'ORD-02', '2025-01-26', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-03', 'SUP-03', 'RCV-03', 'ORD-03', '2025-01-27', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-04', 'SUP-04', 'RCV-04', 'ORD-04', '2025-01-28', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-05', 'SUP-05', 'RCV-05', 'ORD-05', '2025-01-29', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-06', 'SUP-06', 'RCV-06', 'ORD-06', '2025-01-30', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-07', 'SUP-07', 'RCV-07', 'ORD-07', '2025-02-01', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-08', 'SUP-08', 'RCV-08', 'ORD-08', '2025-02-02', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-09', 'SUP-09', 'RCV-09', 'ORD-09', '2025-02-03', 'EMP-08');
+INSERT INTO sufioun_product_return_master (return_id, supplier_id, receive_id, order_id, return_date, return_by) VALUES ('PRT-10', 'SUP-10', 'RCV-10', 'ORD-10', '2025-02-04', 'EMP-08');
+
+--------------------------------------------------------------------------------
+-- 28. sufioun_PRODUCT_RETURN_DETAILS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-01', 'PRT-01', 'PROD-01', 70000, 2, 'Defective Batch');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-02', 'PRT-02', 'PROD-02', 110000, 1, 'Scratch on screen');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-03', 'PRT-03', 'PROD-03', 45000, 2, 'Dead Pixels');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-04', 'PRT-04', 'PROD-04', 50000, 1, 'Missing parts');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-05', 'PRT-05', 'PROD-05', 40000, 3, 'Does not power on');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-06', 'PRT-06', 'PROD-06', 75000, 1, 'Keyboard faulty');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-07', 'PRT-07', 'PROD-07', 15000, 5, 'Battery swelling');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-08', 'PRT-08', 'PROD-08', 65000, 1, 'Wrong Model Received');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-09', 'PRT-09', 'PROD-09', 22000, 2, 'Transit damage');
+INSERT INTO sufioun_product_return_details (return_detail_id, return_id, product_id, purchase_price, return_quantity, reason) VALUES ('PRD-10', 'PRT-10', 'PROD-10', 25000, 1, 'Not pairing');
+
+--------------------------------------------------------------------------------
+-- 29. sufioun_DAMAGE
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-01', '2025-03-01', 'WH-A1', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-02', '2025-03-02', 'WH-B2', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-03', '2025-03-03', 'WH-C3', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-04', '2025-03-04', 'WH-D4', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-05', '2025-03-05', 'WH-E5', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-06', '2025-03-06', 'WH-F6', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-07', '2025-03-07', 'WH-G7', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-08', '2025-03-08', 'WH-H8', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-09', '2025-03-09', 'WH-I9', 'EMP-01');
+INSERT INTO sufioun_damage (damage_id, damage_date, reference_no, approved_by) VALUES ('DMG-10', '2025-03-10', 'WH-J10', 'EMP-01');
+
+--------------------------------------------------------------------------------
+-- 30. sufioun_DAMAGE_DETAIL
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-01', 'DMG-01', 'PROD-01', 70000, 85000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-02', 'DMG-02', 'PROD-02', 110000, 130000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-03', 'DMG-03', 'PROD-03', 45000, 55000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-04', 'DMG-04', 'PROD-04', 50000, 65000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-05', 'DMG-05', 'PROD-05', 40000, 52000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-06', 'DMG-06', 'PROD-06', 75000, 90000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-07', 'DMG-07', 'PROD-07', 15000, 19999, 2);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-08', 'DMG-08', 'PROD-08', 65000, 80000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-09', 'DMG-09', 'PROD-09', 22000, 28000, 1);
+INSERT INTO sufioun_damage_detail (damage_detail_id, damage_id, product_id, purchase_price, mrp, damage_quantity) VALUES ('DDT-10', 'DMG-10', 'PROD-10', 25000, 32000, 1);
+
+--------------------------------------------------------------------------------
+-- 31. sufioun_EXPENSE_MASTER
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-01', '2025-01-31', 'DPT-01', 'EXP-01', 'EMP-02');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-02', '2025-01-31', 'DPT-02', 'EXP-02', 'EMP-04');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-03', '2025-01-31', 'DPT-03', 'EXP-04', 'EMP-07');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-04', '2025-02-15', 'DPT-10', 'EXP-05', 'EMP-01');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-05', '2025-02-28', 'DPT-04', 'EXP-07', 'EMP-06');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-06', '2025-02-28', 'DPT-06', 'EXP-03', 'EMP-09');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-07', '2025-03-01', 'DPT-05', 'EXP-06', 'EMP-10');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-08', '2025-03-05', 'DPT-01', 'EXP-08', 'EMP-03');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-09', '2025-03-10', 'DPT-02', 'EXP-09', 'EMP-04');
+INSERT INTO sufioun_expense_master (expense_id, expense_date, department_id, expense_type_id, expense_by) VALUES ('EXM-10', '2025-03-15', 'DPT-09', 'EXP-10', 'EMP-01');
+
+--------------------------------------------------------------------------------
+-- 32. sufioun_EXPENSE_DETAILS
+--------------------------------------------------------------------------------
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-01', 'EXM-01', 'Monthly Showroom Rent', 50000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-02', 'EXM-02', 'Electricity Bill January', 12000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-03', 'EXM-03', 'Staff Salaries January', 150000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-04', 'EXM-04', 'Facebook Campaign', 20000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-05', 'EXM-05', 'Printing Paper and Pens', 2500);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-06', 'EXM-06', 'Broadband Bill Feb', 3000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-07', 'EXM-07', 'Delivery Van Fuel', 5000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-08', 'EXM-08', 'Client Meeting Snacks', 1500);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-09', 'EXM-09', 'AC Filter Cleaning Service', 4000);
+INSERT INTO sufioun_expense_details (expense_det_id, expense_id, description, amount) VALUES ('EXD-10', 'EXM-10', 'Miscellaneous Office Supplies', 3500);
+
+-- =============================================================================
+-- UTILITY SCRIPT (Sync existing stock with product info just in case)
+-- =============================================================================
+UPDATE sufioun_stock s
+SET (supplier_id, product_cat_id, sub_cat_id) = (
+    SELECT supplier_id, category_id, sub_cat_id
+    FROM sufioun_products p
+    WHERE p.product_id = s.product_id
+);
+
+COMMIT;
