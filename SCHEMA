@@ -102,14 +102,12 @@ CREATE TABLE sufioun_company (
     upd_dt              DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_company IS 'Mother Company Information Table';
 /
 
 CREATE SEQUENCE sufioun_company_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -161,7 +159,6 @@ CREATE TABLE sufioun_branches (
   CONSTRAINT sufioun_fk_branch_company FOREIGN KEY (company_id) REFERENCES sufioun_company(company_id),
   CONSTRAINT sufioun_uk_branch_name UNIQUE (company_id, branch_name)
 );
- COMMENT ON TABLE sufioun_branches IS 'Branch Master Data';
 /
 
 CREATE SEQUENCE sufioun_branches_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -217,7 +214,6 @@ CREATE TABLE sufioun_jobs (
     upd_dt       DATE,
     CONSTRAINT sufioun_chk_job_grade CHECK (job_grade IN ('A','B','C') OR job_grade IS NULL)
 );
- COMMENT ON TABLE sufioun_jobs IS 'Job/Position Definitions';
 /
 
 CREATE SEQUENCE sufioun_jobs_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -270,14 +266,12 @@ CREATE TABLE sufioun_customers (
     upd_dt        DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_customers IS 'Customer Master Data';
 /
 
 CREATE SEQUENCE sufioun_customers_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -313,6 +307,7 @@ CREATE TABLE sufioun_parts_category (
     parts_cat_id    VARCHAR2(50) PRIMARY KEY,
     parts_cat_code  VARCHAR2(50),
     parts_cat_name  VARCHAR2(150) ,
+  sort_order      NUMBER(5) DEFAULT 0,
     -- APEX Image Columns
     image_name      VARCHAR2(500),
     image_mime_type VARCHAR2(100),
@@ -325,14 +320,12 @@ CREATE TABLE sufioun_parts_category (
     upd_dt          DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_parts_category IS 'Parts Category Classification';
 /
 
 CREATE SEQUENCE sufioun_parts_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -366,6 +359,7 @@ END;
 CREATE TABLE sufioun_product_categories (
     product_cat_id    VARCHAR2(50) PRIMARY KEY,
     product_cat_name  VARCHAR2(150) ,
+  sort_order        NUMBER(5) DEFAULT 0,
     -- APEX Image Columns
     image_name        VARCHAR2(500),
     image_mime_type   VARCHAR2(100),
@@ -378,14 +372,12 @@ CREATE TABLE sufioun_product_categories (
     upd_dt            DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_product_categories IS 'Product Category Classification';
 /
 
 CREATE SEQUENCE sufioun_prod_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -442,14 +434,12 @@ CREATE TABLE sufioun_brand (
     upd_dt        DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_brand IS 'Brand/Manufacturer Master Data';
 /
 
 CREATE SEQUENCE sufioun_brand_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -504,14 +494,12 @@ CREATE TABLE sufioun_suppliers (
     upd_dt         DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_suppliers IS 'Supplier/Vendor Master Data';
 /
 
 CREATE SEQUENCE sufioun_suppliers_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -557,7 +545,6 @@ CREATE TABLE sufioun_service_list (
     upd_by         VARCHAR2(100),
     upd_dt         DATE
 );
- COMMENT ON TABLE sufioun_service_list IS 'Service Types and Pricing';
 /
 
 CREATE SEQUENCE sufioun_service_list_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -603,7 +590,6 @@ CREATE TABLE sufioun_expense_list (
     upd_by          VARCHAR2(100),
     upd_dt          DATE
 );
- COMMENT ON TABLE sufioun_expense_list IS 'Expense Type Definitions';
 /
 
 CREATE SEQUENCE sufioun_exp_list_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -651,14 +637,12 @@ CREATE TABLE sufioun_sub_categories (
     upd_dt           DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_sub_categories IS 'Product Sub-Category Classification';
 /
 
 CREATE SEQUENCE sufioun_sub_cat_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -715,14 +699,12 @@ CREATE TABLE sufioun_products (
     upd_dt          DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_products IS 'Product Master Data';
 /
 
 CREATE SEQUENCE sufioun_products_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -771,14 +753,12 @@ CREATE TABLE sufioun_parts (
     upd_dt         DATE
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_parts IS 'Spare Parts Master Data';
 /
 
 CREATE SEQUENCE sufioun_parts_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -827,7 +807,6 @@ CREATE TABLE sufioun_departments (
     upd_dt          DATE,
     CONSTRAINT sufioun_fk_dept_branch FOREIGN KEY (branch_id) REFERENCES sufioun_branches(branch_id)
 );
- COMMENT ON TABLE sufioun_departments IS 'Department/Unit Organization';
 /
 
 CREATE SEQUENCE sufioun_departments_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -885,7 +864,6 @@ CREATE TABLE sufioun_employees (
     CONSTRAINT sufioun_fk_emp_dept FOREIGN KEY (department_id) REFERENCES sufioun_departments(department_id)
 )
 LOB (photo) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
@@ -893,14 +871,12 @@ LOB (photo) STORE AS (
     COMPRESS HIGH
 )
 LOB (image_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_employees IS 'Employee Master Data';
 /
 
 CREATE SEQUENCE sufioun_employees_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -952,7 +928,6 @@ END;
       CONSTRAINT sufioun_fk_emp_cv_emp FOREIGN KEY (employee_id)
         REFERENCES sufioun_employees(employee_id) ON DELETE CASCADE
     );
-    COMMENT ON TABLE sufioun_employee_cv IS 'Extended Employee CV and profile data';
     /
 
     CREATE OR REPLACE TRIGGER sufioun_trg_emp_cv_biu
@@ -1045,12 +1020,14 @@ END;
       p_blob     IN BLOB,
       p_mimetype IN VARCHAR2
     ) IS
+      l_blob BLOB;
     BEGIN
+      l_blob := p_blob;
       SYS.HTP.INIT;
       OWA_UTIL.MIME_HEADER(NVL(p_mimetype, 'image/jpeg'), FALSE);
       HTP.P('Cache-Control: no-store');
       OWA_UTIL.HTTP_HEADER_CLOSE;
-      WPG_DOCLOAD.DOWNLOAD_FILE(p_blob);
+      WPG_DOCLOAD.DOWNLOAD_FILE(l_blob);
     END emit_blob;
 
     PROCEDURE stream_blob(
@@ -1233,7 +1210,6 @@ CREATE TABLE sufioun_sales_master (
     CONSTRAINT sufioun_fk_sales_emp  FOREIGN KEY (sales_by) REFERENCES sufioun_employees(employee_id),
     CONSTRAINT sufioun_chk_pay_status CHECK (payment_status IN ('PENDING', 'PAID', 'PARTIAL', 'CANCELLED'))
 );
- COMMENT ON TABLE sufioun_sales_master IS 'Sales Invoice Header';
 /
 
 CREATE SEQUENCE sufioun_sales_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1282,7 +1258,6 @@ CREATE TABLE sufioun_sales_return_master (
     CONSTRAINT sufioun_fk_srm_inv   FOREIGN KEY (invoice_id) REFERENCES sufioun_sales_master(invoice_id),
     CONSTRAINT sufioun_fk_srm_cust  FOREIGN KEY (customer_id) REFERENCES sufioun_customers(customer_id)
 );
- COMMENT ON TABLE sufioun_sales_return_master IS 'Sales Return Header';
 /
 
 CREATE SEQUENCE sufioun_sales_ret_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1338,7 +1313,6 @@ CREATE TABLE sufioun_service_master (
     CONSTRAINT sufioun_chk_svc_status CHECK (service_status IN ('RECEIVED', 'DIAGNOSIS', 'IN_PROGRESS', 'COMPLETED', 'DELIVERED', 'CANCELLED'))
 )
 LOB (image_before_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
@@ -1346,14 +1320,12 @@ LOB (image_before_blob) STORE AS (
     COMPRESS HIGH
 )
 LOB (image_after_blob) STORE AS (
-    TABLESPACE USERS
     ENABLE STORAGE IN ROW
     CHUNK 8192
     PCTVERSION 10
     CACHE
     COMPRESS HIGH
 );
- COMMENT ON TABLE sufioun_service_master IS 'Service Request Header';
 /
 
 CREATE SEQUENCE sufioun_service_master_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1388,7 +1360,6 @@ CREATE TABLE sufioun_product_order_master (
     CONSTRAINT sufioun_fk_pom_emp  FOREIGN KEY (order_by) REFERENCES sufioun_employees(employee_id),
     CONSTRAINT sufioun_chk_order_status CHECK (order_status IN ('PENDING', 'APPROVED', 'PROCESSING', 'RECEIVED', 'CANCELLED'))
 );
- COMMENT ON TABLE sufioun_product_order_master IS 'Purchase Order Header';
 /
 
 CREATE SEQUENCE sufioun_order_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1441,7 +1412,6 @@ CREATE TABLE sufioun_product_receive_master (
     CONSTRAINT sufioun_fk_pr_sup    FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
     CONSTRAINT sufioun_fk_pr_order  FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id)
 );
- COMMENT ON TABLE sufioun_product_receive_master IS 'Goods Received Note Header';
 /
 
 CREATE SEQUENCE sufioun_receive_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1519,7 +1489,6 @@ CREATE TABLE sufioun_product_return_master (
     CONSTRAINT sufioun_fk_pre_order FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id),
     CONSTRAINT sufioun_fk_pre_emp FOREIGN KEY (return_by) REFERENCES sufioun_employees(employee_id)
 );
- COMMENT ON TABLE sufioun_product_return_master IS 'Supplier Return Header';
 /
 
 CREATE SEQUENCE sufioun_prod_ret_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1566,7 +1535,6 @@ CREATE TABLE sufioun_damage (
     upd_dt DATE, 
     CONSTRAINT sufioun_fk_dmg_emp FOREIGN KEY (approved_by) REFERENCES sufioun_employees(employee_id)
 );
- COMMENT ON TABLE sufioun_damage IS 'Damage/Loss Records';
 /
 
 CREATE SEQUENCE sufioun_damage_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1611,7 +1579,6 @@ CREATE TABLE sufioun_stock (
     CONSTRAINT sufioun_chk_stock_qty CHECK (quantity >= 0),
     CONSTRAINT sufioun_uk_stock_prod UNIQUE (product_id)
 );
- COMMENT ON TABLE sufioun_stock IS 'Inventory Stock Tracking';
 /
 
 CREATE SEQUENCE sufioun_stock_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1654,7 +1621,6 @@ CREATE TABLE sufioun_service_details (
     CONSTRAINT sufioun_fk_sd_parts  FOREIGN KEY (parts_id) REFERENCES sufioun_parts(parts_id),
     CONSTRAINT sufioun_fk_sd_prod   FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_service_details IS 'Service Line Items';
 /
 
 CREATE SEQUENCE sufioun_service_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1708,7 +1674,6 @@ CREATE TABLE sufioun_sales_detail (
     CONSTRAINT sufioun_fk_sdt_inv  FOREIGN KEY (invoice_id) REFERENCES sufioun_sales_master(invoice_id) ON DELETE CASCADE,
     CONSTRAINT sufioun_fk_sdt_prod FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_sales_detail IS 'Sales Invoice Line Items';
 /
 
 CREATE SEQUENCE sufioun_sales_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1793,7 +1758,6 @@ CREATE TABLE sufioun_sales_return_details (
     CONSTRAINT sufioun_fk_srd_mst FOREIGN KEY (sales_return_id) REFERENCES sufioun_sales_return_master(sales_return_id),
     CONSTRAINT sufioun_fk_srd_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_sales_return_details IS 'Sales Return Line Items';
 /
 
 CREATE SEQUENCE sufioun_sales_ret_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1846,7 +1810,6 @@ CREATE TABLE sufioun_product_order_detail (
     CONSTRAINT sufioun_fk_pod_mst FOREIGN KEY (order_id) REFERENCES sufioun_product_order_master(order_id),
     CONSTRAINT sufioun_fk_pod_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_product_order_detail IS 'Purchase Order Line Items';
 /
 
 CREATE SEQUENCE sufioun_order_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -1933,7 +1896,6 @@ CREATE TABLE sufioun_product_receive_details (
     CONSTRAINT sufioun_fk_prd_mst FOREIGN KEY (receive_id) REFERENCES sufioun_product_receive_master(receive_id),
     CONSTRAINT sufioun_fk_prd_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_product_receive_details IS 'Goods Received Line Items';
 /
 
 CREATE SEQUENCE sufioun_recv_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2015,7 +1977,6 @@ CREATE TABLE sufioun_product_return_details (
     CONSTRAINT sufioun_fk_prdet_mst FOREIGN KEY (return_id) REFERENCES sufioun_product_return_master(return_id),
     CONSTRAINT sufioun_fk_prdet_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_product_return_details IS 'Supplier Return Line Items';
 /
 
 CREATE SEQUENCE sufioun_prod_ret_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2094,7 +2055,6 @@ CREATE TABLE sufioun_expense_master (
     CONSTRAINT sufioun_fk_ex_mst FOREIGN KEY (expense_type_id) REFERENCES sufioun_expense_list(expense_type_id),
     CONSTRAINT sufioun_fk_ex_dept FOREIGN KEY (department_id) REFERENCES sufioun_departments(department_id)
 );
- COMMENT ON TABLE sufioun_expense_master IS 'Expense Transaction Header';
 /
 
 CREATE SEQUENCE sufioun_exp_mst_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2130,7 +2090,6 @@ CREATE TABLE sufioun_expense_details (
     --
     CONSTRAINT sufioun_fk_ex_det_mst FOREIGN KEY (expense_id) REFERENCES sufioun_expense_master(expense_id)
 );
- COMMENT ON TABLE sufioun_expense_details IS 'Expense Line Items';
 /
 
 CREATE SEQUENCE sufioun_exp_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2175,7 +2134,6 @@ CREATE TABLE sufioun_damage_detail (
     CONSTRAINT sufioun_fk_dmg_mst FOREIGN KEY (damage_id) REFERENCES sufioun_damage(damage_id),
     CONSTRAINT sufioun_fk_dmg_prd FOREIGN KEY (product_id) REFERENCES sufioun_products(product_id)
 );
- COMMENT ON TABLE sufioun_damage_detail IS 'Damage/Loss Line Items';
 /
 
 CREATE SEQUENCE sufioun_damage_det_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2226,7 +2184,6 @@ CREATE TABLE sufioun_com_users (
     CONSTRAINT sufioun_fk_users_emp FOREIGN KEY (employee_id) REFERENCES sufioun_employees(employee_id) ON DELETE SET NULL,
     CONSTRAINT sufioun_chk_user_role CHECK (role IN ('admin', 'manager', 'user', 'technician', 'cashier'))
 );
- COMMENT ON TABLE sufioun_com_users IS 'Application User Accounts';
 /
 
 CREATE SEQUENCE sufioun_users_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2268,7 +2225,6 @@ CREATE TABLE sufioun_payments (
     CONSTRAINT sufioun_fk_pay_sup FOREIGN KEY (supplier_id) REFERENCES sufioun_suppliers(supplier_id),
     CONSTRAINT sufioun_chk_pay_type CHECK (UPPER(payment_type) IN ('CASH','ONLINE','BANK','CHEQUE'))
 );
- COMMENT ON TABLE sufioun_payments IS 'Supplier Payment Records';
 /
 
 CREATE SEQUENCE sufioun_payments_seq START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE;
@@ -2614,7 +2570,6 @@ CREATE INDEX idx_products_status ON sufioun_products(status);
 CREATE INDEX idx_parts_name ON sufioun_parts(parts_name);
 CREATE INDEX idx_parts_cat ON sufioun_parts(parts_cat_id);
 
-CREATE INDEX idx_customers_phone ON sufioun_customers(phone_no);
 CREATE INDEX idx_customers_name ON sufioun_customers(customer_name);
 CREATE INDEX idx_customers_city ON sufioun_customers(city);
 
@@ -2644,13 +2599,11 @@ CREATE INDEX idx_receive_date ON sufioun_product_receive_master(receive_date);
 CREATE INDEX idx_receive_sup ON sufioun_product_receive_master(supplier_id);
 CREATE INDEX idx_receive_order ON sufioun_product_receive_master(order_id);
 
-CREATE INDEX idx_stock_prod ON sufioun_stock(product_id);
 CREATE INDEX idx_stock_cat ON sufioun_stock(product_cat_id);
 
 CREATE INDEX idx_payments_sup ON sufioun_payments(supplier_id);
 CREATE INDEX idx_payments_date ON sufioun_payments(payment_date);
 
-CREATE INDEX idx_users_name ON sufioun_com_users(user_name);
 CREATE INDEX idx_users_role ON sufioun_com_users(role);
 CREATE INDEX idx_users_emp ON sufioun_com_users(employee_id);
 
@@ -3373,7 +3326,19 @@ ORDER BY d.department_name, e.first_name;
     WHEN quantity < 20 THEN 'LOW'
     ELSE 'OK'
   END AS stock_status
-FROM sufioun_stock_position_v
+FROM (
+  SELECT
+    p.product_code,
+    p.product_name,
+    cat.product_cat_name AS category_name,
+    sup.supplier_name,
+    NVL(s.quantity,0) AS quantity
+  FROM sufioun_products p
+  LEFT JOIN sufioun_stock s ON s.product_id = p.product_id
+  LEFT JOIN sufioun_product_categories cat ON cat.product_cat_id = p.category_id
+  LEFT JOIN sufioun_suppliers sup ON sup.supplier_id = p.supplier_id
+  WHERE NVL(p.status,1) = 1
+)
 WHERE quantity < 20
 ORDER BY quantity ASC;
 --13)
