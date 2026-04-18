@@ -355,6 +355,8 @@ DECLARE
 BEGIN
   -- Delete-then-insert keeps detail rows exactly aligned with current RETURN_ITEMS collection state
   -- (including removed rows from the IG).
+  -- Use this pattern for small/medium transactional grids where full-row replacement is acceptable.
+  -- For very large line sets, consider MERGE/upsert strategy.
   DELETE FROM sufioun_purchase_return_details
   WHERE return_id = :P50_RETURN_ID;
 
@@ -541,6 +543,7 @@ Use a named SQL*Plus variable for the safety threshold so it is easy to tune dur
 DEFINE BAD_TOTAL_FACTOR = '5';
 -- 5 = conservative anomaly threshold for legacy bad totals:
 -- only rows with GRAND_TOTAL > 5x expected amount are corrected by this bulk script.
+-- Example: expected grand_total = 100, row is corrected only when stored grand_total > 500.
 
 UPDATE sufioun_purchase_return_master m
 SET m.total_amount = (
