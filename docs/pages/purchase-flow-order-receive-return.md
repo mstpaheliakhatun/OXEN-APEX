@@ -12,20 +12,20 @@ It captures the final schema logic, APEX process sequencing, trigger fixes, and 
 
 ## 1) End-to-End Flow and Module Dependencies
 
-## 1.1 Functional dependency chain
+### 1.1 Functional dependency chain
 
 1. **Purchase Order** creates commercial intent (`SUFIOUN_PURCHASE_ORDER_MASTER` + `SUFIOUN_PURCHASE_ORDER_DETAILS`).
 2. **Purchase Receive** records actual received quantities against PO (`SUFIOUN_PURCHASE_RECEIVE_MASTER` + `SUFIOUN_PURCHASE_RECEIVE_DETAILS`).
 3. **Purchase Return** sends received stock back to supplier (`SUFIOUN_PURCHASE_RETURN_MASTER` + `SUFIOUN_PURCHASE_RETURN_DETAILS`).
 
-## 1.2 Data dependency chain
+### 1.2 Data dependency chain
 
 1. Return depends on Receive (`RECEIVE_ID`).
 2. Receive depends on Purchase Order (`ORDER_ID`).
 3. All detail rows depend on valid `PRODUCT_ID` from `SUFIOUN_PRODUCTS`.
 4. Supplier financial rollups depend on Receive/Return master totals.
 
-## 1.3 Stock dependency chain
+### 1.3 Stock dependency chain
 
 1. Receive detail insert/update increases stock.
 2. Return detail insert/update decreases stock.
@@ -49,7 +49,7 @@ It captures the final schema logic, APEX process sequencing, trigger fixes, and 
 
 ## 3) Finalized Database Logic (SQL/PLSQL)
 
-## 3.1 Purchase Order detail total sync trigger (compound)
+### 3.1 Purchase Order detail total sync trigger (compound)
 
 ```sql
 CREATE OR REPLACE TRIGGER sufioun_tri_total_price_compound
@@ -89,39 +89,54 @@ END sufioun_tri_total_price_compound;
 /
 ```
 
-## 3.2 Purchase Receive total sync trigger
+### 3.2 Purchase Receive total sync trigger
 
 ```sql
 CREATE OR REPLACE TRIGGER sufioun_tri_receive_total_amount
-AFTER INSERT OR UPDATE OR DELETE ON sufioun_purchase_receive_details
-DECLARE
+FOR INSERT OR UPDATE OR DELETE ON sufioun_purchase_receive_details
+COMPOUND TRIGGER
+
+  TYPE t_recv_ids IS TABLE OF VARCHAR2(50) INDEX BY VARCHAR2(50);
+  g_recv_ids t_recv_ids;
+
+  PROCEDURE add_recv_id(p_recv_id VARCHAR2) IS
+  BEGIN
+    IF p_recv_id IS NOT NULL THEN
+      g_recv_ids(p_recv_id) := p_recv_id;
+    END IF;
+  END;
+
+AFTER EACH ROW IS
 BEGIN
-  FOR r IN (
-    SELECT DISTINCT receive_id
-    FROM sufioun_purchase_receive_details
-  ) LOOP
+  add_recv_id(:NEW.receive_id);
+  add_recv_id(:OLD.receive_id);
+END AFTER EACH ROW;
+
+AFTER STATEMENT IS
+  k       VARCHAR2(50);
+  v_total NUMBER;
+BEGIN
+  k := g_recv_ids.FIRST;
+  WHILE k IS NOT NULL LOOP
+    SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
+      INTO v_total
+      FROM sufioun_purchase_receive_details d
+     WHERE d.receive_id = k;
+
     UPDATE sufioun_purchase_receive_master m
-       SET m.total_amount = (
-             SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
-             FROM sufioun_purchase_receive_details d
-             WHERE d.receive_id = r.receive_id
-           ),
-           m.grand_total = (
-             SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
-             FROM sufioun_purchase_receive_details d
-             WHERE d.receive_id = r.receive_id
-           ) + NVL((
-             SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0) * NVL(m.vat, 0) / 100
-             FROM sufioun_purchase_receive_details d
-             WHERE d.receive_id = r.receive_id
-           ), 0)
-     WHERE m.receive_id = r.receive_id;
+       SET m.total_amount = v_total,
+           m.grand_total  = v_total + (v_total * NVL(m.vat, 0) / 100)
+     WHERE m.receive_id = k;
+
+    k := g_recv_ids.NEXT(k);
   END LOOP;
-END;
+END AFTER STATEMENT;
+
+END sufioun_tri_receive_total_amount;
 /
 ```
 
-## 3.3 Purchase Return total sync trigger (final mutating-safe compound trigger)
+### 3.3 Purchase Return total sync trigger (final mutating-safe compound trigger)
 
 > This is the final fix pattern for `ORA-04091` on return totals.
 
@@ -177,7 +192,7 @@ END sufioun_tri_ret_total_price;
 /
 ```
 
-## 3.4 Return detail ID trigger (keep existing)
+### 3.4 Return detail ID trigger (keep existing)
 
 ```sql
 CREATE OR REPLACE TRIGGER sufioun_trg_prod_ret_det_bi
@@ -191,7 +206,7 @@ END;
 /
 ```
 
-## 3.5 Stock movement triggers for receive/return
+### 3.5 Stock movement triggers for receive/return
 
 ```sql
 CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_receive
@@ -239,7 +254,10 @@ END;
 
 ## 4) Finalized APEX Patterns (Purchase Return)
 
-## 4.1 Pattern A: Sync IG rows to collection before submit
+> **Collection constant used in all return processes:** `RETURN_ITEMS`  
+> Keep this value identical in DA, on-demand process, and after-master process.
+
+### 4.1 Pattern A: Sync IG rows to collection before submit
 
 ### Dynamic Action (Execute JavaScript Code)
 
@@ -326,7 +344,7 @@ EXCEPTION
 END;
 ```
 
-## 4.2 Pattern B: Single detail persistence process after master DML
+### 4.2 Pattern B: Single detail persistence process after master DML
 
 > Keep **only one** detail-save process. Remove/disable duplicates.
 
@@ -335,6 +353,8 @@ END;
 ```plsql
 DECLARE
 BEGIN
+  -- Delete-then-insert keeps detail rows exactly aligned with current RETURN_ITEMS collection state
+  -- (including removed rows from the IG).
   DELETE FROM sufioun_purchase_return_details
   WHERE return_id = :P50_RETURN_ID;
 
@@ -364,7 +384,7 @@ BEGIN
 END;
 ```
 
-## 4.3 Process sequencing (required order)
+### 4.3 Process sequencing (required order)
 
 1. `SYNC_IG_TO_COLLECTION` (DA/on-demand) before submit final DML.
 2. Master form DML for `SUFIOUN_PURCHASE_RETURN_MASTER`.
@@ -375,7 +395,7 @@ END;
 
 ## 5) Final Query Blocks Used by Pages
 
-## 5.1 Purchase Order lines
+### 5.1 Purchase Order lines
 
 ```sql
 SELECT order_detail_id,
@@ -391,7 +411,7 @@ WHERE order_id = :P710_ORDER_ID
 ORDER BY order_detail_id;
 ```
 
-## 5.2 Purchase Receive pending-from-order lines
+### 5.2 Purchase Receive pending-from-order lines
 
 ```sql
 SELECT d.order_detail_id,
@@ -412,7 +432,7 @@ WHERE d.order_id = :P720_ORDER_ID
   AND (d.quantity - NVL(r.received_qty, 0)) > 0;
 ```
 
-## 5.3 Purchase Return returnable-from-receive lines
+### 5.3 Purchase Return returnable-from-receive lines
 
 ```sql
 SELECT rd.receive_det_id,
@@ -437,7 +457,7 @@ WHERE rd.receive_id = :P50_RECEIVE_ID
 
 ## 6) Troubleshooting Guide
 
-## 6.1 ORA-04091 mutating table on return total trigger
+### 6.1 ORA-04091 mutating table on return total trigger
 
 **Symptom**
 - Save/update/delete return details fails with mutating table error.
@@ -448,7 +468,7 @@ WHERE rd.receive_id = :P50_RECEIVE_ID
 **Fix**
 - Replace with compound trigger pattern `SUFIOUN_TRI_RET_TOTAL_PRICE` in section 3.3.
 
-## 6.2 Collection empty / return quantity becomes zero
+### 6.2 Collection empty / return quantity becomes zero
 
 **Symptom**
 - Return details saved as empty rows or quantities become `0`.
@@ -469,7 +489,7 @@ WHERE collection_name = 'RETURN_ITEMS'
 ORDER BY seq_id;
 ```
 
-## 6.3 FK mismatch on `PRODUCT_ID`
+### 6.3 FK mismatch on `PRODUCT_ID`
 
 **Symptom**
 - Insert into return details fails with FK violation.
@@ -489,9 +509,9 @@ WHERE product_id = :P_CHECK_PRODUCT_ID;
 2. Ensure IG column maps exact `PRODUCT_ID` value, not display label.
 3. Rebuild collection after correcting IG mapping.
 
-## 6.4 Historical bad totals in return master
+### 6.4 Historical bad totals in return master
 
-**Caution**
+**Note**
 - Some old rows may have inflated totals due to earlier trigger logic.
 
 **One-time corrective SQL**
@@ -508,14 +528,20 @@ SET m.total_amount = (
       FROM sufioun_purchase_return_details d
       WHERE d.return_id = m.return_id
     ) + NVL(m.adjusted_vat,0)
-WHERE m.return_id = 'PRT-14';
+WHERE m.return_id = :P_RETURN_ID;
 
 COMMIT;
 ```
 
 Optional bulk-safe correction:
 
+Use a named SQL*Plus variable for the safety threshold so it is easy to tune during remediation.
+
 ```sql
+DEFINE BAD_TOTAL_FACTOR = '5';
+-- 5 = conservative anomaly threshold for legacy bad totals:
+-- only rows with GRAND_TOTAL > 5x expected amount are corrected by this bulk script.
+
 UPDATE sufioun_purchase_return_master m
 SET m.total_amount = (
       SELECT NVL(SUM(NVL(d.line_total,0)),0)
@@ -527,7 +553,7 @@ SET m.total_amount = (
       FROM sufioun_purchase_return_details d
       WHERE d.return_id = m.return_id
     ) + NVL(m.adjusted_vat,0)
-WHERE m.grand_total > (NVL(m.total_amount,0) + NVL(m.adjusted_vat,0)) * 5;
+WHERE m.grand_total > (NVL(m.total_amount,0) + NVL(m.adjusted_vat,0)) * &BAD_TOTAL_FACTOR;
 
 COMMIT;
 ```
