@@ -1989,28 +1989,58 @@ BEGIN
 END;
 /
 
-CREATE OR REPLACE TRIGGER sufioun_tri_ret_total_price
-AFTER INSERT OR UPDATE OR DELETE ON Sufioun_Purchase_Return_Detailss
-DECLARE
+CREATE OR REPLACE TRIGGER SUFIOUN_TRI_RET_TOTAL_PRICE
+FOR INSERT OR UPDATE OR DELETE ON Sufioun_Purchase_Return_Details
+COMPOUND TRIGGER
+
+    TYPE t_ret_ids IS TABLE OF VARCHAR2(50) INDEX BY VARCHAR2(50);
+    g_ret_ids t_ret_ids;
+
+    PROCEDURE add_ret_id(p_ret_id VARCHAR2) IS
+    BEGIN
+        IF p_ret_id IS NOT NULL THEN
+            g_ret_ids(p_ret_id) := p_ret_id;
+        END IF;
+    END;
+
+AFTER EACH ROW IS
 BEGIN
-    FOR r IN (SELECT DISTINCT return_id FROM Sufioun_Purchase_Return_Detailss) LOOP
+    IF INSERTING THEN
+        add_ret_id(:NEW.return_id);
+    ELSIF UPDATING THEN
+        add_ret_id(:NEW.return_id);
+        add_ret_id(:OLD.return_id);
+    ELSIF DELETING THEN
+        add_ret_id(:OLD.return_id);
+    END IF;
+END AFTER EACH ROW;
+
+AFTER STATEMENT IS
+    k       VARCHAR2(50);
+    v_total NUMBER;
+    v_adj   NUMBER;
+BEGIN
+    k := g_ret_ids.FIRST;
+    WHILE k IS NOT NULL LOOP
+        SELECT NVL(SUM(NVL(d.line_total,0)),0)
+        INTO v_total
+        FROM Sufioun_Purchase_Return_Details d
+        WHERE d.return_id = k;
+
+        SELECT NVL(m.adjusted_vat,0)
+        INTO v_adj
+        FROM Sufioun_Purchase_Return_Master m
+        WHERE m.return_id = k;
+
         UPDATE Sufioun_Purchase_Return_Master m
-        SET m.total_amount = (
-                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0)
-                FROM Sufioun_Purchase_Return_Detailss d
-                WHERE d.return_id = r.return_id
-            ),
-            m.grand_total = (
-                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0)
-                FROM Sufioun_Purchase_Return_Detailss d
-                WHERE d.return_id = r.return_id
-            ) + NVL((
-                SELECT NVL(SUM(d.purchase_price * d.return_quantity), 0) * NVL(m.adjusted_vat,0) / 100
-                FROM Sufioun_Purchase_Return_Detailss d
-                WHERE d.return_id = r.return_id
-            ),0)
-        WHERE m.return_id = r.return_id;
+        SET m.total_amount = v_total,
+            m.grand_total = v_total + v_adj
+        WHERE m.return_id = k;
+
+        k := g_ret_ids.NEXT(k);
     END LOOP;
+END AFTER STATEMENT;
+
 END;
 /
 

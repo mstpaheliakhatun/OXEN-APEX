@@ -1,16 +1,605 @@
-# Purchase Flow — Order / Receive / Return (Page 52 / Page 53)
+# Purchase Flow (Final): Purchase Order -> Purchase Receive -> Purchase Return
 
-This page captures the latest validated implementation fixes and troubleshooting notes for Purchase Order and Purchase Receive detail modals.
+This document is the finalized implementation guide for the procurement transaction flow:
 
-## Page 52 — Purchase Order Details modal: detail rows appear fewer than DB rows
+1. Purchase Order
+2. Purchase Receive
+3. Purchase Return
 
-### Symptom
-For some orders, `SUFIOUN_PURCHASE_ORDER_DETAILS` contained 4 rows but the Page 52 modal showed only 2 rows.
+It captures the final schema logic, APEX process sequencing, trigger fixes, and known troubleshooting paths.
 
-### Root cause
-Data was present in DB. The Interactive Grid (IG) was opening with persisted report state (pagination/filter/report state), so visible rows were limited by prior IG state.
+---
 
-### Validation SQL (confirm data before UI troubleshooting)
+## 1) End-to-End Flow and Module Dependencies
+
+### 1.1 Functional dependency chain
+
+1. **Purchase Order** creates commercial intent (`SUFIOUN_PURCHASE_ORDER_MASTER` + `SUFIOUN_PURCHASE_ORDER_DETAILS`).
+2. **Purchase Receive** records actual received quantities against PO (`SUFIOUN_PURCHASE_RECEIVE_MASTER` + `SUFIOUN_PURCHASE_RECEIVE_DETAILS`).
+3. **Purchase Return** sends received stock back to supplier (`SUFIOUN_PURCHASE_RETURN_MASTER` + `SUFIOUN_PURCHASE_RETURN_DETAILS`).
+
+### 1.2 Data dependency chain
+
+1. Return depends on Receive (`RECEIVE_ID`).
+2. Receive depends on Purchase Order (`ORDER_ID`).
+3. All detail rows depend on valid `PRODUCT_ID` from `SUFIOUN_PRODUCTS`.
+4. Supplier financial rollups depend on Receive/Return master totals.
+
+### 1.3 Stock dependency chain
+
+1. Receive detail insert/update increases stock.
+2. Return detail insert/update decreases stock.
+3. Product mismatch in return detail causes FK failure before stock trigger executes.
+
+---
+
+## 2) Practical Implementation Order (Do This Sequence)
+
+1. Create/confirm core tables and FK relationships.
+2. Create ID generation triggers (`*_BI` triggers + sequences).
+3. Create/replace total recalculation triggers.
+4. Create stock movement triggers.
+5. Build APEX pages (Order -> Receive -> Return).
+6. Add Return IG-to-collection sync DA and on-demand process.
+7. Keep only one detail persistence process (after master DML) on Return page.
+8. Run correction SQL for historical bad totals (one-time).
+9. Run create/update regression checklist.
+
+---
+
+## 3) Finalized Database Logic (SQL/PLSQL)
+
+### 3.1 Purchase Order detail total sync trigger (compound)
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_tri_total_price_compound
+FOR INSERT OR UPDATE OR DELETE ON sufioun_purchase_order_details
+COMPOUND TRIGGER
+  TYPE t_order_id_list IS TABLE OF sufioun_purchase_order_details.order_id%TYPE INDEX BY PLS_INTEGER;
+  v_order_ids t_order_id_list;
+
+  AFTER EACH ROW IS
+  BEGIN
+    IF INSERTING OR UPDATING THEN
+      v_order_ids(v_order_ids.COUNT + 1) := :NEW.order_id;
+    ELSIF DELETING THEN
+      v_order_ids(v_order_ids.COUNT + 1) := :OLD.order_id;
+    END IF;
+  END AFTER EACH ROW;
+
+  AFTER STATEMENT IS
+    v_total       NUMBER;
+    v_grand_total NUMBER;
+  BEGIN
+    FOR i IN 1 .. v_order_ids.COUNT LOOP
+      SELECT NVL(SUM(purchase_price * quantity), 0)
+        INTO v_total
+        FROM sufioun_purchase_order_details
+       WHERE order_id = v_order_ids(i);
+
+      v_grand_total := v_total + (v_total * 0.10);
+
+      UPDATE sufioun_purchase_order_master
+         SET total_amount = v_total,
+             grand_total  = v_grand_total
+       WHERE order_id = v_order_ids(i);
+    END LOOP;
+  END AFTER STATEMENT;
+END sufioun_tri_total_price_compound;
+/
+```
+
+### 3.2 Purchase Receive total sync trigger
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_tri_receive_total_amount
+FOR INSERT OR UPDATE OR DELETE ON sufioun_purchase_receive_details
+COMPOUND TRIGGER
+
+  TYPE t_recv_ids IS TABLE OF VARCHAR2(50) INDEX BY VARCHAR2(50);
+  g_recv_ids t_recv_ids;
+
+  PROCEDURE add_recv_id(p_recv_id VARCHAR2) IS
+  BEGIN
+    IF p_recv_id IS NOT NULL THEN
+      g_recv_ids(p_recv_id) := p_recv_id;
+    END IF;
+  END;
+
+AFTER EACH ROW IS
+BEGIN
+  add_recv_id(:NEW.receive_id);
+  add_recv_id(:OLD.receive_id);
+END AFTER EACH ROW;
+
+AFTER STATEMENT IS
+  k       VARCHAR2(50);
+  v_total NUMBER;
+BEGIN
+  k := g_recv_ids.FIRST;
+  WHILE k IS NOT NULL LOOP
+    SELECT NVL(SUM(d.purchase_price * d.receive_quantity), 0)
+      INTO v_total
+      FROM sufioun_purchase_receive_details d
+     WHERE d.receive_id = k;
+
+    UPDATE sufioun_purchase_receive_master m
+       SET m.total_amount = v_total,
+           m.grand_total  = v_total + (v_total * NVL(m.vat, 0) / 100)
+     WHERE m.receive_id = k;
+
+    k := g_recv_ids.NEXT(k);
+  END LOOP;
+END AFTER STATEMENT;
+
+END sufioun_tri_receive_total_amount;
+/
+```
+
+### 3.3 Purchase Return total sync trigger (final mutating-safe compound trigger)
+
+> This is the final fix pattern for `ORA-04091` on return totals.
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_tri_ret_total_price
+FOR INSERT OR UPDATE OR DELETE ON sufioun_purchase_return_details
+COMPOUND TRIGGER
+
+  TYPE t_ret_ids IS TABLE OF VARCHAR2(50) INDEX BY VARCHAR2(50);
+  g_ret_ids t_ret_ids;
+
+  PROCEDURE add_ret_id(p_ret_id VARCHAR2) IS
+  BEGIN
+    IF p_ret_id IS NOT NULL THEN
+      g_ret_ids(p_ret_id) := p_ret_id;
+    END IF;
+  END;
+
+AFTER EACH ROW IS
+BEGIN
+  add_ret_id(:NEW.return_id);
+  add_ret_id(:OLD.return_id);
+END AFTER EACH ROW;
+
+AFTER STATEMENT IS
+  k       VARCHAR2(50);
+  v_total NUMBER;
+  v_adj   NUMBER;
+BEGIN
+  k := g_ret_ids.FIRST;
+  WHILE k IS NOT NULL LOOP
+    SELECT NVL(SUM(NVL(d.line_total,0)),0)
+      INTO v_total
+      FROM sufioun_purchase_return_details d
+     WHERE d.return_id = k;
+
+    SELECT NVL(m.adjusted_vat,0)
+      INTO v_adj
+      FROM sufioun_purchase_return_master m
+     WHERE m.return_id = k
+     FOR UPDATE;
+
+    UPDATE sufioun_purchase_return_master m
+       SET m.total_amount = v_total,
+           m.grand_total  = v_total + v_adj
+     WHERE m.return_id = k;
+
+    k := g_ret_ids.NEXT(k);
+  END LOOP;
+END AFTER STATEMENT;
+
+END sufioun_tri_ret_total_price;
+/
+```
+
+### 3.4 Return detail ID trigger (keep existing)
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_trg_prod_ret_det_bi
+BEFORE INSERT ON sufioun_purchase_return_details
+FOR EACH ROW
+BEGIN
+  IF :NEW.return_detail_id IS NULL THEN
+    :NEW.return_detail_id := 'PRD-' || TO_CHAR(sufioun_prod_ret_det_seq.NEXTVAL);
+  END IF;
+END;
+/
+```
+
+### 3.5 Stock movement triggers for receive/return
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stock_receive
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_purchase_receive_details
+FOR EACH ROW
+BEGIN
+  IF INSERTING THEN
+    sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity);
+  ELSIF DELETING THEN
+    sufioun_update_stock_qty(:OLD.product_id, -:OLD.receive_quantity);
+  ELSIF UPDATING THEN
+    IF :OLD.product_id != :NEW.product_id THEN
+      sufioun_update_stock_qty(:OLD.product_id, -:OLD.receive_quantity);
+      sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity);
+    ELSE
+      sufioun_update_stock_qty(:NEW.product_id, :NEW.receive_quantity - :OLD.receive_quantity);
+    END IF;
+  END IF;
+END;
+/
+```
+
+```sql
+CREATE OR REPLACE TRIGGER sufioun_trg_auto_stk_pur_ret
+AFTER INSERT OR UPDATE OR DELETE ON sufioun_purchase_return_details
+FOR EACH ROW
+BEGIN
+  IF INSERTING THEN
+    sufioun_update_stock_qty(:NEW.product_id, -NVL(:NEW.return_quantity, 0));
+  ELSIF DELETING THEN
+    sufioun_update_stock_qty(:OLD.product_id, NVL(:OLD.return_quantity, 0));
+  ELSIF UPDATING THEN
+    IF :OLD.product_id != :NEW.product_id THEN
+      sufioun_update_stock_qty(:OLD.product_id, NVL(:OLD.return_quantity, 0));
+      sufioun_update_stock_qty(:NEW.product_id, -NVL(:NEW.return_quantity, 0));
+    ELSE
+      sufioun_update_stock_qty(:NEW.product_id, -(NVL(:NEW.return_quantity, 0) - NVL(:OLD.return_quantity, 0)));
+    END IF;
+  END IF;
+END;
+/
+```
+
+---
+
+## 4) Finalized APEX Patterns (Purchase Return)
+
+> **Collection constant used in all return processes:** `RETURN_ITEMS`  
+> Keep this value identical in DA, on-demand process, and after-master process.
+
+### 4.1 Pattern A: Sync IG rows to collection before submit
+
+### Dynamic Action (Execute JavaScript Code)
+
+```javascript
+apex.server.process(
+  'SYNC_IG_TO_COLLECTION',
+  {
+    pageItems: '#P50_RETURN_ID'
+  },
+  {
+    dataType: 'json',
+    success: function(pData) {
+      if (pData && pData.status === 'OK') {
+        apex.message.clearErrors();
+      } else {
+        apex.message.showErrors([
+          {
+            type: 'error',
+            location: ['page'],
+            message: (pData && pData.message) ? pData.message : 'Failed to sync return rows to collection.',
+            unsafe: false
+          }
+        ]);
+      }
+    },
+    error: function(jqXHR, textStatus, errorThrown) {
+      apex.message.showErrors([
+        {
+          type: 'error',
+          location: ['page'],
+          message: 'SYNC_IG_TO_COLLECTION failed: ' + textStatus + ' / ' + errorThrown,
+          unsafe: false
+        }
+      ]);
+    }
+  }
+);
+```
+
+### On-Demand Process: `SYNC_IG_TO_COLLECTION`
+
+```plsql
+DECLARE
+  l_count NUMBER := 0;
+BEGIN
+  apex_collection.create_or_truncate_collection('RETURN_ITEMS');
+
+  FOR r IN (
+    SELECT
+      return_detail_id,
+      return_id,
+      product_id,
+      mrp,
+      purchase_price,
+      return_quantity,
+      reason
+    FROM sufioun_purchase_return_details
+    WHERE return_id = :P50_RETURN_ID
+  ) LOOP
+    apex_collection.add_member(
+      p_collection_name => 'RETURN_ITEMS',
+      p_c001            => r.return_detail_id,
+      p_c002            => r.return_id,
+      p_c003            => r.product_id,
+      p_c004            => TO_CHAR(r.mrp),
+      p_c005            => TO_CHAR(r.purchase_price),
+      p_c006            => TO_CHAR(r.return_quantity),
+      p_c007            => r.reason
+    );
+
+    l_count := l_count + 1;
+  END LOOP;
+
+  apex_json.open_object;
+  apex_json.write('status', 'OK');
+  apex_json.write('rows_synced', l_count);
+  apex_json.close_object;
+EXCEPTION
+  WHEN OTHERS THEN
+    apex_json.open_object;
+    apex_json.write('status', 'ERROR');
+    apex_json.write('message', SQLERRM);
+    apex_json.close_object;
+END;
+```
+
+### 4.2 Pattern B: Single detail persistence process after master DML
+
+> Keep **only one** detail-save process. Remove/disable duplicates.
+
+### Process: `PRC_INS_RETURN_DETAILS_FROM_COLLECTION` (After Master DML)
+
+```plsql
+DECLARE
+BEGIN
+  -- Delete-then-insert keeps detail rows exactly aligned with current RETURN_ITEMS collection state
+  -- (including removed rows from the IG).
+  -- Use this pattern for small/medium transactional grids where full-row replacement is acceptable.
+  -- For very large line sets, consider MERGE/upsert strategy.
+  DELETE FROM sufioun_purchase_return_details
+  WHERE return_id = :P50_RETURN_ID;
+
+  FOR c IN (
+    SELECT c001, c002, c003, c004, c005, c006, c007
+    FROM apex_collections
+    WHERE collection_name = 'RETURN_ITEMS'
+  ) LOOP
+    INSERT INTO sufioun_purchase_return_details (
+      return_detail_id,
+      return_id,
+      product_id,
+      mrp,
+      purchase_price,
+      return_quantity,
+      reason
+    ) VALUES (
+      NVL(c.c001, 'PRD-' || TO_CHAR(sufioun_prod_ret_det_seq.NEXTVAL)),
+      :P50_RETURN_ID,
+      c.c003,
+      TO_NUMBER(NVL(c.c004, '0')),
+      TO_NUMBER(NVL(c.c005, '0')),
+      TO_NUMBER(NVL(c.c006, '0')),
+      c.c007
+    );
+  END LOOP;
+END;
+```
+
+### 4.3 Process sequencing (required order)
+
+1. `SYNC_IG_TO_COLLECTION` (DA/on-demand) before submit final DML.
+2. Master form DML for `SUFIOUN_PURCHASE_RETURN_MASTER`.
+3. `PRC_INS_RETURN_DETAILS_FROM_COLLECTION` (**After Master DML**).
+4. Automatic trigger recalculates `TOTAL_AMOUNT` and `GRAND_TOTAL`.
+
+---
+
+## 5) Final Query Blocks Used by Pages
+
+### 5.1 Purchase Order lines
+
+```sql
+SELECT order_detail_id,
+       order_id,
+       product_id,
+       mrp,
+       purchase_price,
+       quantity,
+       delivered_qty,
+       line_total
+FROM sufioun_purchase_order_details
+WHERE order_id = :P710_ORDER_ID
+ORDER BY order_detail_id;
+```
+
+### 5.2 Purchase Receive pending-from-order lines
+
+```sql
+SELECT d.order_detail_id,
+       d.product_id,
+       d.quantity                                           AS ordered_qty,
+       NVL(r.received_qty, 0)                              AS total_received_qty,
+       (d.quantity - NVL(r.received_qty, 0))               AS pending_qty,
+       d.purchase_price,
+       d.mrp
+FROM sufioun_purchase_order_details d
+LEFT JOIN (
+  SELECT order_detail_id,
+         SUM(receive_quantity) AS received_qty
+  FROM sufioun_purchase_receive_details
+  GROUP BY order_detail_id
+) r ON r.order_detail_id = d.order_detail_id
+WHERE d.order_id = :P720_ORDER_ID
+  AND (d.quantity - NVL(r.received_qty, 0)) > 0;
+```
+
+### 5.3 Purchase Return returnable-from-receive lines
+
+```sql
+SELECT rd.receive_det_id,
+       rd.product_id,
+       rd.receive_quantity,
+       NVL(rt.returned_qty, 0)                             AS already_returned_qty,
+       (rd.receive_quantity - NVL(rt.returned_qty, 0))     AS returnable_qty,
+       rd.purchase_price,
+       rd.mrp
+FROM sufioun_purchase_receive_details rd
+LEFT JOIN (
+  SELECT receive_det_id,
+         SUM(return_quantity) AS returned_qty
+  FROM sufioun_purchase_return_details
+  GROUP BY receive_det_id
+) rt ON rt.receive_det_id = rd.receive_det_id
+WHERE rd.receive_id = :P50_RECEIVE_ID
+  AND (rd.receive_quantity - NVL(rt.returned_qty, 0)) > 0;
+```
+
+---
+
+## 6) Troubleshooting Guide
+
+### 6.1 ORA-04091 mutating table on return total trigger
+
+**Symptom**
+- Save/update/delete return details fails with mutating table error.
+
+**Root cause**
+- Row-level style trigger queries same return detail table during row event.
+
+**Fix**
+- Replace with compound trigger pattern `SUFIOUN_TRI_RET_TOTAL_PRICE` in section 3.3.
+
+### 6.2 Collection empty / return quantity becomes zero
+
+**Symptom**
+- Return details saved as empty rows or quantities become `0`.
+
+**Root cause**
+- `SYNC_IG_TO_COLLECTION` not executed before submit, or multiple detail processes conflict.
+
+**Fix**
+1. Ensure DA calls on-demand sync before submit.
+2. Ensure only one detail insert process exists.
+3. Keep detail insert process after master DML.
+4. Verify collection content:
+
+```sql
+SELECT seq_id, c001, c002, c003, c004, c005, c006, c007
+FROM apex_collections
+WHERE collection_name = 'RETURN_ITEMS'
+ORDER BY seq_id;
+```
+
+### 6.3 FK mismatch on `PRODUCT_ID`
+
+**Symptom**
+- Insert into return details fails with FK violation.
+
+**Root cause**
+- `PRODUCT_ID` in collection is not in `SUFIOUN_PRODUCTS`, or stale item mapping from IG.
+
+**Fix**
+1. Validate product exists:
+
+```sql
+SELECT product_id
+FROM sufioun_products
+WHERE product_id = :P_CHECK_PRODUCT_ID;
+```
+
+2. Ensure IG column maps exact `PRODUCT_ID` value, not display label.
+3. Rebuild collection after correcting IG mapping.
+
+### 6.4 Historical bad totals in return master
+
+**Note**
+- Some old rows may have inflated totals due to earlier trigger logic.
+
+**One-time corrective SQL**
+
+```sql
+UPDATE sufioun_purchase_return_master m
+SET m.total_amount = (
+      SELECT NVL(SUM(NVL(d.line_total,0)),0)
+      FROM sufioun_purchase_return_details d
+      WHERE d.return_id = m.return_id
+    ),
+    m.grand_total = (
+      SELECT NVL(SUM(NVL(d.line_total,0)),0)
+      FROM sufioun_purchase_return_details d
+      WHERE d.return_id = m.return_id
+    ) + NVL(m.adjusted_vat,0)
+WHERE m.return_id = :P_RETURN_ID;
+
+COMMIT;
+```
+
+Optional bulk-safe correction:
+
+Use a named SQL*Plus variable for the safety threshold so it is easy to tune during remediation.
+
+```sql
+DEFINE BAD_TOTAL_FACTOR = '5';
+-- 5 = conservative anomaly threshold for legacy bad totals:
+-- only rows with GRAND_TOTAL > 5x expected amount are corrected by this bulk script.
+-- Example: expected grand_total = 100, row is corrected only when stored grand_total > 500.
+
+UPDATE sufioun_purchase_return_master m
+SET m.total_amount = (
+      SELECT NVL(SUM(NVL(d.line_total,0)),0)
+      FROM sufioun_purchase_return_details d
+      WHERE d.return_id = m.return_id
+    ),
+    m.grand_total = (
+      SELECT NVL(SUM(NVL(d.line_total,0)),0)
+      FROM sufioun_purchase_return_details d
+      WHERE d.return_id = m.return_id
+    ) + NVL(m.adjusted_vat,0)
+WHERE m.grand_total > (NVL(m.total_amount,0) + NVL(m.adjusted_vat,0)) * &BAD_TOTAL_FACTOR;
+
+COMMIT;
+```
+
+---
+
+## 7) Validation & Testing Checklist (Create + Update)
+
+- [ ] Create Purchase Order with multiple products and verify `TOTAL_AMOUNT`/`GRAND_TOTAL`.
+- [ ] Update one PO detail quantity and verify master totals recalculate.
+- [ ] Create Purchase Receive from PO and verify pending quantity logic.
+- [ ] Update receive quantity and verify stock increase delta is correct.
+- [ ] Create Purchase Return from receive and verify returnable quantity logic.
+- [ ] Confirm DA sync populates `RETURN_ITEMS` before submit.
+- [ ] Confirm only one detail save process runs on submit.
+- [ ] Update existing return lines and confirm no duplicate details are inserted.
+- [ ] Confirm trigger updates `SUFIOUN_PURCHASE_RETURN_MASTER.TOTAL_AMOUNT` and `GRAND_TOTAL` correctly.
+- [ ] Confirm no `ORA-04091` occurs on insert/update/delete of return details.
+- [ ] Confirm FK integrity for `PRODUCT_ID`.
+- [ ] Verify supplier financial summary/due impact after receive and return.
+
+---
+
+## 8) Final Notes
+
+1. Return totals must always be detail-driven (`SUM(line_total)`) + `ADJUSTED_VAT`.
+2. Keep process order stable; avoid parallel duplicate detail save processes.
+3. If totals appear inconsistent after deployment, run one-time corrective SQL and then retest create/update cycle.
+
+---
+
+## 9) Page 52 / Page 53 Detail Modal Fixes (Validated)
+
+### 9.1 Page 52 — Purchase Order Details modal row visibility issue
+
+**Symptom**
+- Order had 4 detail rows in DB, but modal sometimes showed only 2 rows.
+
+**Root cause**
+- Interactive Grid report state/pagination was persisted (stuck page/filter/report state).
+- Data was not missing from `SUFIOUN_PURCHASE_ORDER_DETAILS`.
+
+**Validation SQL**
 ```sql
 SELECT COUNT(*) AS detail_row_count,
        SUM(NVL(QUANTITY, 0)) AS detail_total_quantity
@@ -33,26 +622,24 @@ SELECT d.ORDER_DETAIL_ID,
  ORDER BY d.ORDER_DETAIL_ID;
 ```
 
-### Final fix (open modal with report reset)
-Use the modal link URL with `RP` so Page 52 opens with reset report state:
+**Fix**
+- Open modal with reset report state request (`RP`):
 
 ```text
 f?p=&APP_ID.:52:&APP_SESSION.::NO:RP,52:P52_ORDER_ID:#ORDER_ID#
 ```
 
-### Pagination guidance
-- If **Pagination Type = Scroll**, the IG expands with scroll behavior and avoids page-based row hiding confusion.
-- If page-based pagination is kept, ensure page size/state is appropriate or users may see fewer rows by default.
+**Pagination guidance**
+- `Scroll` pagination avoids confusion caused by persisted page-based state.
+- With page-based pagination, page size/current page can hide rows by default.
 
-## Page 52 — UI polish notes (horizontal scroll + bottom strip blocking buttons)
+### 9.2 Page 52 — UI polish notes
 
-In modal IG layouts, unnecessary horizontal scrollbar area and IG status/footer strips can visually overlap or push action buttons out of easy reach.
+Horizontal scrollbar area and IG bottom status/footer strip can obstruct modal action buttons.
 
-### CSS recommendation
-> Replace `#Order_Details` with the actual Page 52 IG region Static ID.
+> Use the actual Page 52 IG region static ID (replace `#Order_Details`).
 
 ```css
-/* Page 52: keep modal action area usable */
 #Order_Details .a-GV-footer,
 #Order_Details .a-GV-status,
 #Order_Details .a-IG-status,
@@ -71,15 +658,15 @@ In modal IG layouts, unnecessary horizontal scrollbar area and IG status/footer 
 }
 ```
 
-## Page 53 — Purchase Receive Details modal: missing Product Name and Ordered Quantity
+### 9.3 Page 53 — Purchase Receive Details modal missing Product Name / Ordered Quantity
 
-### Symptom
-IG did not show Product Name and Ordered Quantity.
+**Symptom**
+- IG did not show `PRODUCT_NAME` and `ORDER_QUANTITY`.
 
-### Root cause
-The IG query selected only `SUFIOUN_PURCHASE_RECEIVE_DETAILS` columns, so display-only values from related tables were unavailable.
+**Root cause**
+- Query selected only `SUFIOUN_PURCHASE_RECEIVE_DETAILS` columns (no joins).
 
-### Corrected SQL (final)
+**Correct SQL**
 ```sql
 SELECT d.RECEIVE_DET_ID,
        d.RECEIVE_ID,
@@ -100,18 +687,17 @@ SELECT d.RECEIVE_DET_ID,
  ORDER BY d.RECEIVE_DET_ID;
 ```
 
-### Recommended IG columns
-- **Visible**: `PRODUCT_NAME`, `ORDER_QUANTITY`, `RECEIVE_QUANTITY`, `PURCHASE_PRICE`, `LINE_TOTAL`
-- **Hidden (technical)**: `RECEIVE_DET_ID`, `RECEIVE_ID`, `PRODUCT_ID`, `ORDER_DETAIL_ID`
+**Recommended IG columns**
+- Visible: `PRODUCT_NAME`, `ORDER_QUANTITY`, `RECEIVE_QUANTITY`, `PURCHASE_PRICE`, `LINE_TOTAL`
+- Hidden: `RECEIVE_DET_ID`, `RECEIVE_ID`, `PRODUCT_ID`, `ORDER_DETAIL_ID`
 
-## Page 53 — CSS selector correction (wrong page selector used previously)
+### 9.4 Page 53 — CSS selector correction
 
-Prior CSS used a Page 52 selector (`#R156250216129047487131`) on Page 53, so rules did not apply.
+Prior CSS used a Page 52 selector by mistake.
 
-Use the actual Page 53 IG region Static ID (current example: `#Receive_Details`).
+Use Page 53 IG region static ID (example: `#Receive_Details`).
 
 ```css
-/* Page 53: hide blocking IG strips + remove unnecessary horizontal scroll */
 #Receive_Details .a-GV-footer,
 #Receive_Details .a-GV-status,
 #Receive_Details .a-IG-status,
@@ -135,20 +721,12 @@ Use the actual Page 53 IG region Static ID (current example: `#Receive_Details`)
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
-
-.t-Dialog-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
-  background: #fff;
-}
 ```
 
-## Troubleshooting checklist (Order/Receive detail modal)
+### 9.5 Troubleshooting checklist
 
-1. Verify DB detail row count first (`SUFIOUN_PURCHASE_ORDER_DETAILS` / `SUFIOUN_PURCHASE_RECEIVE_DETAILS`).
-2. If DB rows are correct but IG shows fewer rows, reset report state (`RP`) and review pagination behavior.
-3. Confirm IG SQL includes required joins for display-only fields (`PRODUCT_NAME`, `ORDER_QUANTITY`).
-4. Confirm CSS selectors use the correct current page region Static ID (Page 52 vs Page 53).
-5. Re-test modal open flow from source page after URL reset fix:
-   - `f?p=&APP_ID.:52:&APP_SESSION.::NO:RP,52:P52_ORDER_ID:#ORDER_ID#`
+1. Verify DB detail row count first.
+2. If DB rows are correct but IG shows fewer, reset report state and check pagination.
+3. Confirm IG SQL joins for display-only columns.
+4. Confirm CSS static-id selectors match current page regions.
+5. Re-test modal open flow from source page after URL fix.
