@@ -585,3 +585,148 @@ COMMIT;
 1. Return totals must always be detail-driven (`SUM(line_total)`) + `ADJUSTED_VAT`.
 2. Keep process order stable; avoid parallel duplicate detail save processes.
 3. If totals appear inconsistent after deployment, run one-time corrective SQL and then retest create/update cycle.
+
+---
+
+## 9) Page 52 / Page 53 Detail Modal Fixes (Validated)
+
+### 9.1 Page 52 — Purchase Order Details modal row visibility issue
+
+**Symptom**
+- Order had 4 detail rows in DB, but modal sometimes showed only 2 rows.
+
+**Root cause**
+- Interactive Grid report state/pagination was persisted (stuck page/filter/report state).
+- Data was not missing from `SUFIOUN_PURCHASE_ORDER_DETAILS`.
+
+**Validation SQL**
+```sql
+SELECT COUNT(*) AS detail_row_count,
+       SUM(NVL(QUANTITY, 0)) AS detail_total_quantity
+  FROM SUFIOUN_PURCHASE_ORDER_DETAILS
+ WHERE ORDER_ID = :P52_ORDER_ID;
+```
+
+```sql
+SELECT d.ORDER_DETAIL_ID,
+       d.ORDER_ID,
+       d.PRODUCT_ID,
+       p.PRODUCT_NAME,
+       d.QUANTITY,
+       d.PURCHASE_PRICE,
+       (NVL(d.QUANTITY, 0) * NVL(d.PURCHASE_PRICE, 0)) AS LINE_TOTAL
+  FROM SUFIOUN_PURCHASE_ORDER_DETAILS d
+  LEFT JOIN SUFIOUN_PRODUCTS p
+    ON p.PRODUCT_ID = d.PRODUCT_ID
+ WHERE d.ORDER_ID = :P52_ORDER_ID
+ ORDER BY d.ORDER_DETAIL_ID;
+```
+
+**Fix**
+- Open modal with reset report state request (`RP`):
+
+```text
+f?p=&APP_ID.:52:&APP_SESSION.::NO:RP,52:P52_ORDER_ID:#ORDER_ID#
+```
+
+**Pagination guidance**
+- `Scroll` pagination avoids confusion caused by persisted page-based state.
+- With page-based pagination, page size/current page can hide rows by default.
+
+### 9.2 Page 52 — UI polish notes
+
+Horizontal scrollbar area and IG bottom status/footer strip can obstruct modal action buttons.
+
+> Use the actual Page 52 IG region static ID (replace `#Order_Details`).
+
+```css
+#Order_Details .a-GV-footer,
+#Order_Details .a-GV-status,
+#Order_Details .a-IG-status,
+#Order_Details .a-GV-bottom {
+  display: none !important;
+}
+
+#Order_Details .a-GV-w-scroll {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+#Order_Details .a-GV-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+```
+
+### 9.3 Page 53 — Purchase Receive Details modal missing Product Name / Ordered Quantity
+
+**Symptom**
+- IG did not show `PRODUCT_NAME` and `ORDER_QUANTITY`.
+
+**Root cause**
+- Query selected only `SUFIOUN_PURCHASE_RECEIVE_DETAILS` columns (no joins).
+
+**Correct SQL**
+```sql
+SELECT d.RECEIVE_DET_ID,
+       d.RECEIVE_ID,
+       d.PRODUCT_ID,
+       p.PRODUCT_NAME,
+       od.QUANTITY AS ORDER_QUANTITY,
+       d.MRP,
+       d.PURCHASE_PRICE,
+       d.RECEIVE_QUANTITY,
+       (NVL(d.PURCHASE_PRICE, 0) * NVL(d.RECEIVE_QUANTITY, 0)) AS LINE_TOTAL,
+       d.ORDER_DETAIL_ID
+  FROM SUFIOUN_PURCHASE_RECEIVE_DETAILS d
+  LEFT JOIN SUFIOUN_PRODUCTS p
+    ON p.PRODUCT_ID = d.PRODUCT_ID
+  LEFT JOIN SUFIOUN_PURCHASE_ORDER_DETAILS od
+    ON od.ORDER_DETAIL_ID = d.ORDER_DETAIL_ID
+ WHERE d.RECEIVE_ID = :P53_RECEIVE_ID
+ ORDER BY d.RECEIVE_DET_ID;
+```
+
+**Recommended IG columns**
+- Visible: `PRODUCT_NAME`, `ORDER_QUANTITY`, `RECEIVE_QUANTITY`, `PURCHASE_PRICE`, `LINE_TOTAL`
+- Hidden: `RECEIVE_DET_ID`, `RECEIVE_ID`, `PRODUCT_ID`, `ORDER_DETAIL_ID`
+
+### 9.4 Page 53 — CSS selector correction
+
+Prior CSS used a Page 52 selector by mistake.
+
+Use Page 53 IG region static ID (example: `#Receive_Details`).
+
+```css
+#Receive_Details .a-GV-footer,
+#Receive_Details .a-GV-status,
+#Receive_Details .a-IG-status,
+#Receive_Details .a-GV-bottom {
+  display: none !important;
+}
+
+#Receive_Details .a-GV-w-scroll {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+#Receive_Details .a-GV-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+#Receive_Details .a-GV-header th,
+#Receive_Details .a-GV-cell {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+```
+
+### 9.5 Troubleshooting checklist
+
+1. Verify DB detail row count first.
+2. If DB rows are correct but IG shows fewer, reset report state and check pagination.
+3. Confirm IG SQL joins for display-only columns.
+4. Confirm CSS static-id selectors match current page regions.
+5. Re-test modal open flow from source page after URL fix.
